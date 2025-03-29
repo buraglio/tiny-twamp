@@ -1,13 +1,13 @@
-#TinyTwamp
+# TinyTwamp
 
-##An attempt at a TWAMP client/server in go
+## An attempt at a TWAMP client/server in go
 
-###Features
+### Features
 Supports Client and Server in the same binary. 
 
 Supports IPv6 as well as legacy IP
 
-###Example Usage:
+### Example Usage:
 
 To run the server on an IPv6-enabled machine:
 
