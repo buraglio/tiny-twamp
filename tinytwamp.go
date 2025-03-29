@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"syscall"
 	"time"
 )
 
@@ -24,9 +25,11 @@ var (
 func main() {
 	flag.Parse()
 
-	// Set up logging if a log file path is provided
+	// Setup logging
+	var logFile *os.File
 	if *logFilePath != "" {
-		logFile, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		var err error
+		logFile, err = os.OpenFile(*logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
 			fmt.Println("Error opening log file:", err)
 			return
@@ -39,15 +42,16 @@ func main() {
 		log.SetOutput(os.Stdout)
 	}
 
+	// Run the server or client based on the mode
 	switch *mode {
 	case "server":
 		if *runAsDaemon {
-			runServerAsDaemon()
+			runServerAsDaemon() // Pass the log file path to the daemonized process
 		} else {
-			runServer()
+			runServer(logFile)
 		}
 	case "client":
-		runClient()
+		runClient(logFile)
 	default:
 		fmt.Println("Invalid mode. Use 'client' or 'server'")
 		os.Exit(1)
@@ -55,7 +59,7 @@ func main() {
 }
 
 // TWAMP Test Server (interactive mode)
-func runServer() {
+func runServer(logFile *os.File) {
 	// Listen on UDP port 862 for incoming requests, using IPv6
 	addr := net.UDPAddr{
 		Port: 862,
@@ -91,10 +95,31 @@ func runServer() {
 
 // TWAMP Test Server (daemon mode)
 func runServerAsDaemon() {
-	// Create a new process to run the server in the background (daemon)
-	cmd := exec.Command(os.Args[0], "-mode", "server")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
+	// Fork the process to run it as a daemon
+	// Detach the process from the terminal and run it in the background
+	attr := syscall.SysProcAttr{
+		Setsid: true, // Start a new session and detach from the terminal
+	}
+
+	cmd := exec.Command(os.Args[0], "-mode", "server", "-logfile", *logFilePath)
+	cmd.SysProcAttr = &attr
+
+	// Set up the log file for the daemon
+	if *logFilePath != "" {
+		logFile, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			log.Println("Error opening log file:", err)
+			return
+		}
+		defer logFile.Close()
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+	} else {
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	}
+
+	// Start the server as a daemon, redirecting output to the log file
 	err := cmd.Start()
 	if err != nil {
 		log.Println("Error starting daemon:", err)
@@ -107,7 +132,7 @@ func runServerAsDaemon() {
 }
 
 // TWAMP Client
-func runClient() {
+func runClient(logFile *os.File) {
 	// Connect to the TWAMP server over IPv6
 	server := fmt.Sprintf("[%s]:862", *serverAddr)
 	addr, err := net.ResolveUDPAddr("udp", server)
