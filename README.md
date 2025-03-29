@@ -1,7 +1,8 @@
 
-# TWAMP Server and Client in Go
+# TinyTwamp - TWAMP Server and Client in Go
 
-This is a simple implementation of a Two-Way Active Measurement Protocol (TWAMP) server and client in Go. The server can run interactively or as a daemon, and the client can perform round-trip time (RTT) tests between itself and the server. Logs of each test are captured on both the client and the server side.
+This is a simple implementation of a Two-Way Active Measurement Protocol (TWAMP) server and client in a single Go binary. The server can run interactively or as a daemon, and the client can perform round-trip time (RTT) tests between itself and the server. Logs of each test are captured on both the client and the server side, and can be logged to a file.
+The client can be run from CRON to facilitate regular, ongoing tests. This binary should have a small enough memory and CPU requirement that it can be built and run on nearly anything.
 
 ## Features
 
@@ -21,7 +22,7 @@ This is a simple implementation of a Two-Way Active Measurement Protocol (TWAMP)
 
 1. Clone the repository to your local machine:
     ```bash
-    git clone https://github.com/yourusername/twamp-go.git
+    git clone https://github.com/buraglio/tiny-twamp.git
     cd twamp-go
     ```
 
@@ -43,18 +44,28 @@ You can run the server either interactively or as a daemon.
     ```bash
     go run tinytwamp.go -mode server -logfile /path/to/logfile.log
     ```
+```bash
+    ./tinytwamp.go -mode server -logfile /path/to/logfile.log
+    ```
 
 - **Daemon Mode**:
     To run the server as a daemon (background process) and log results:
     ```bash
     go run tinytwamp.go -mode server -daemon true -logfile /path/to/logfile.log
     ```
-
+or
+```bash
+    ./tinytwamp.go -mode server -daemon true -logfile /path/to/logfile.log
+    ```
 ### Client Mode
 
 To run the client and perform a test against the server, use the following command:
 ```bash
 go run tinytwamp.go -mode client -server fd7a:115c:a1e0::1801:7746 -logfile /path/to/logfile.log
+```
+or
+```bash
+./tinytwamp.go -mode client -server fd7a:115c:a1e0::1801:7746 -logfile /path/to/logfile.log
 ```
 
 - Replace `fd7a:115c:a1e0::1801:7746` with the server's IPv6 address.
@@ -92,4 +103,4 @@ Feel free to fork this project and submit pull requests. If you have any issues 
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](https://opensource.org/license/mit) file for details.
