@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/exec"
@@ -17,10 +18,26 @@ var (
 	mode        = flag.String("mode", "client", "Mode: client or server")
 	serverAddr  = flag.String("server", "localhost", "TWAMP server address (client mode only)")
 	runAsDaemon = flag.Bool("daemon", false, "Run server as a daemon")
+	logFilePath = flag.String("logfile", "", "Log file path (optional)")
 )
 
 func main() {
 	flag.Parse()
+
+	// Set up logging if a log file path is provided
+	if *logFilePath != "" {
+		logFile, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			fmt.Println("Error opening log file:", err)
+			return
+		}
+		defer logFile.Close()
+
+		log.SetOutput(logFile)
+		log.Println("Logging started")
+	} else {
+		log.SetOutput(os.Stdout)
+	}
 
 	switch *mode {
 	case "server":
@@ -46,18 +63,18 @@ func runServer() {
 	}
 	conn, err := net.ListenUDP("udp", &addr)
 	if err != nil {
-		fmt.Println("Error setting up server:", err)
+		log.Println("Error setting up server:", err)
 		return
 	}
 	defer conn.Close()
-	fmt.Println("TWAMP server is listening on IPv6 port 862...")
+	log.Println("TWAMP server is listening on IPv6 port 862...")
 
 	buf := make([]byte, 1024)
 	for {
 		// Read the incoming packet
 		_, clientAddr, err := conn.ReadFromUDP(buf)
 		if err != nil {
-			fmt.Println("Error reading from client:", err)
+			log.Println("Error reading from client:", err)
 			continue
 		}
 
@@ -66,7 +83,7 @@ func runServer() {
 		// For now, we just simulate an echo
 		_, err = conn.WriteToUDP(buf, clientAddr)
 		if err != nil {
-			fmt.Println("Error sending to client:", err)
+			log.Println("Error sending to client:", err)
 			continue
 		}
 	}
@@ -78,8 +95,12 @@ func runServerAsDaemon() {
 	cmd := exec.Command(os.Args[0], "-mode", "server")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
-	cmd.Start()
-	fmt.Println("Server is running as a daemon...")
+	err := cmd.Start()
+	if err != nil {
+		log.Println("Error starting daemon:", err)
+		return
+	}
+	log.Println("Server is running as a daemon...")
 
 	// Exit the current process (parent) immediately
 	os.Exit(0)
@@ -91,13 +112,13 @@ func runClient() {
 	server := fmt.Sprintf("[%s]:862", *serverAddr)
 	addr, err := net.ResolveUDPAddr("udp", server)
 	if err != nil {
-		fmt.Println("Error resolving address:", err)
+		log.Println("Error resolving address:", err)
 		return
 	}
 
 	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
-		fmt.Println("Error connecting to server:", err)
+		log.Println("Error connecting to server:", err)
 		return
 	}
 	defer conn.Close()
@@ -107,19 +128,19 @@ func runClient() {
 	startTime := time.Now()
 	_, err = conn.Write(message)
 	if err != nil {
-		fmt.Println("Error sending message:", err)
+		log.Println("Error sending message:", err)
 		return
 	}
 
 	// Wait for the reply (TWAMP response)
 	_, err = conn.Read(make([]byte, 1024))
 	if err != nil {
-		fmt.Println("Error reading reply:", err)
+		log.Println("Error reading reply:", err)
 		return
 	}
 	endTime := time.Now()
 
 	// Calculate round-trip time
 	roundTripTime := endTime.Sub(startTime)
-	fmt.Printf("Round-trip time: %v\n", roundTripTime)
+	log.Printf("Round-trip time: %v\n", roundTripTime)
 }
