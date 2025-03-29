@@ -60,3 +60,11 @@
 2025/03/29 14:25:39 Received test packet from [fd7a:115c:a1e0::e501:c016]:46413: Round-trip time: 7.055276ms
 2025/03/29 14:25:39 Sent response to [fd7a:115c:a1e0::e501:c016]:46413
 2025/03/29 14:25:39 Test result for client [fd7a:115c:a1e0::e501:c016]:46413: Round-trip time simulated
+2025/03/29 14:47:20 Received test packet from [fd7a:115c:a1e0::e501:c016]:50046: TWAMP test message
+2025/03/29 14:47:20 Sent response to [fd7a:115c:a1e0::e501:c016]:50046
+2025/03/29 14:47:20 Test result for client [fd7a:115c:a1e0::e501:c016]:50046: Round-trip time simulated
+2025/03/29 14:47:20 Received test packet from [fd7a:115c:a1e0::e501:c016]:50046: Round-trip time: 7.361194ms
+2025/03/29 14:47:20 Sent response to [fd7a:115c:a1e0::e501:c016]:50046
+2025/03/29 14:47:20 Test result for client [fd7a:115c:a1e0::e501:c016]:50046: Round-trip time simulated
+2025/03/29 14:49:16 Logging started
+2025/03/29 14:49:16 TWAMP server is listening on IPv6 port 862...

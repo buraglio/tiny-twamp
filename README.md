@@ -2,7 +2,7 @@
 # TinyTwamp - TWAMP Server and Client in Go
 
 This is a simple implementation of a Two-Way Active Measurement Protocol (TWAMP) server and client in a single Go binary. The server can run interactively or as a daemon, and the client can perform round-trip time (RTT) tests between itself and the server. Logs of each test are captured on both the client and the server side, and can be logged to a file.
-The client can be run from CRON to facilitate regular, ongoing tests. This binary should have a small enough memory and CPU requirement that it can be built and run on nearly anything.
+The client can be run from CRON to facilitate regular, ongoing tests. This binary should have a small enough memory and CPU requirement that it can be built and run on nearly anything and should listen and function on IPv6 as well as legacy IP (but is only tested under the current internet protocol, IPv6)
 
 ## Features
 
