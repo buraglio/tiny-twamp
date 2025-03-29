@@ -68,8 +68,8 @@ func runServer() {
 
 // TWAMP Client
 func runClient() {
-	// Connect to the TWAMP server over IPv6
-	server := *serverAddr + serverPort
+	// Connect to the TWAMP server over IPv6, ensuring the address is in square brackets
+	server := fmt.Sprintf("[%s]:862", *serverAddr)
 	addr, err := net.ResolveUDPAddr("udp", server)
 	if err != nil {
 		fmt.Println("Error resolving address:", err)
@@ -104,5 +104,3 @@ func runClient() {
 	roundTripTime := endTime.Sub(startTime)
 	fmt.Printf("Round-trip time: %v\n", roundTripTime)
 }
-
-
