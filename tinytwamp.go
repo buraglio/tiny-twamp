@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
 	"time"
 )
 
@@ -13,8 +14,9 @@ const (
 )
 
 var (
-	mode       = flag.String("mode", "client", "Mode: client or server")
-	serverAddr = flag.String("server", "localhost", "TWAMP server address (client mode only)")
+	mode        = flag.String("mode", "client", "Mode: client or server")
+	serverAddr  = flag.String("server", "localhost", "TWAMP server address (client mode only)")
+	runAsDaemon = flag.Bool("daemon", false, "Run server as a daemon")
 )
 
 func main() {
@@ -22,7 +24,11 @@ func main() {
 
 	switch *mode {
 	case "server":
-		runServer()
+		if *runAsDaemon {
+			runServerAsDaemon()
+		} else {
+			runServer()
+		}
 	case "client":
 		runClient()
 	default:
@@ -31,7 +37,7 @@ func main() {
 	}
 }
 
-// TWAMP Test Server
+// TWAMP Test Server (interactive mode)
 func runServer() {
 	// Listen on UDP port 862 for incoming requests, using IPv6
 	addr := net.UDPAddr{
@@ -66,9 +72,22 @@ func runServer() {
 	}
 }
 
+// TWAMP Test Server (daemon mode)
+func runServerAsDaemon() {
+	// Create a new process to run the server in the background (daemon)
+	cmd := exec.Command(os.Args[0], "-mode", "server")
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	cmd.Start()
+	fmt.Println("Server is running as a daemon...")
+
+	// Exit the current process (parent) immediately
+	os.Exit(0)
+}
+
 // TWAMP Client
 func runClient() {
-	// Connect to the TWAMP server over IPv6, ensuring the address is in square brackets
+	// Connect to the TWAMP server over IPv6
 	server := fmt.Sprintf("[%s]:862", *serverAddr)
 	addr, err := net.ResolveUDPAddr("udp", server)
 	if err != nil {
