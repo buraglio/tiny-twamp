@@ -68,7 +68,7 @@ go run tinytwamp.go -mode client -server fd7a:115c:a1e0::1801:7746 -logfile /pat
 ```
 or
 ```bash
-./tinytwamp.go -mode client -server fd7a:115c:a1e0::1801:7746 -logfile /path/to/logfile.log
+./tinytwamp -mode client -server fd7a:115c:a1e0::1801:7746 -logfile /path/to/logfile.log
 ```
 
 - Replace `fd7a:115c:a1e0::1801:7746` with the server's IPv6 address.
