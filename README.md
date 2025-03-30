@@ -57,8 +57,9 @@ go run tinytwamp.go -mode server -daemon true -logfile /path/to/logfile.log
 ```
 or
 ```bash
-    ./tinytwamp.go -mode server -daemon true -logfile /path/to/logfile.log
-    ```
+./tinytwamp.go -mode server -daemon true -logfile /path/to/logfile.log
+```
+
 ### Client Mode
 
 To run the client and perform a test against the server, use the following command:
