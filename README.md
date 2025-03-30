@@ -9,9 +9,9 @@ The client can be run from CRON to facilitate regular, ongoing tests. This binar
 - **TWAMP Server**: Listens for test packets from a client and responds with an echo.
 - **TWAMP Client**: Sends test packets to the server, calculates the round-trip time (RTT), and sends the RTT result back to the server.
 - **Logging**: Detailed logs of each test are captured, including:
-  - Client request logs (including the test message sent).
-  - Server response logs (including the response sent).
-  - Test result logs (including round-trip time).
+- Client request logs (including the test message sent).
+- Server response logs (including the response sent).
+- Test result logs (including round-trip time).
 
 ## Requirements
 
@@ -21,15 +21,15 @@ The client can be run from CRON to facilitate regular, ongoing tests. This binar
 ## Installation
 
 1. Clone the repository to your local machine:
-    ```bash
-    git clone https://github.com/buraglio/tiny-twamp.git
-    cd tiny-twamp
-    ```
+```bash
+git clone https://github.com/buraglio/tiny-twamp.git
+cd tiny-twamp
+```
 
 2. Build the project:
-    ```bash
-    go build
-    ```
+```bash
+go build
+```
 
 3. Run the server or client (see below for usage).
 
@@ -40,19 +40,21 @@ The client can be run from CRON to facilitate regular, ongoing tests. This binar
 You can run the server either interactively or as a daemon.
 
 - **Interactive Mode**:
-    To run the server in interactive mode and log results to a specified file:
-    ```bash
-    go run tinytwamp.go -mode server -logfile /path/to/logfile.log
-    ```
+To run the server in interactive mode and log results to a specified file:
 ```bash
-    ./tinytwamp.go -mode server -logfile /path/to/logfile.log
-    ```
+go run tinytwamp.go -mode server -logfile /path/to/logfile.log
+```
+or
+
+```bash
+./tinytwamp -mode server -logfile /path/to/logfile.log
+```
 
 - **Daemon Mode**:
-    To run the server as a daemon (background process) and log results:
-    ```bash
-    go run tinytwamp.go -mode server -daemon true -logfile /path/to/logfile.log
-    ```
+To run the server as a daemon (background process) and log results:
+```bash
+go run tinytwamp.go -mode server -daemon true -logfile /path/to/logfile.log
+```
 or
 ```bash
     ./tinytwamp.go -mode server -daemon true -logfile /path/to/logfile.log
