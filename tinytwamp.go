@@ -86,7 +86,6 @@ func runServer(logFile *os.File) {
 		log.Printf("Received test packet from %s: %s\n", clientAddr.String(), string(buf[:n]))
 
 		// Step 1: Parse the received packet to extract the timestamp
-		// Assume the packet is in the format: "Timestamp: <timestamp>"
 		receivedTimeString := string(buf[:n]) // The message sent by the client
 		var clientTimestamp time.Time
 
@@ -98,13 +97,8 @@ func runServer(logFile *os.File) {
 			continue
 		}
 
-		// Step 2: Calculate the Round-Trip Time (RTT)
-		// Calculate the RTT as the difference between the current time and the timestamp in the packet
-		currentTime := time.Now()
-		roundTripTime := currentTime.Sub(clientTimestamp)
-
-		// Create a response message (e.g., "Round-trip time: <value>")
-		responseMessage := fmt.Sprintf("Round-trip time: %v", roundTripTime)
+		// Step 2: Send the timestamp back to the client as part of the response
+		responseMessage := fmt.Sprintf("Round-trip time: %s", clientTimestamp.Format(time.RFC3339))
 
 		// Send the result back to the client
 		_, err = conn.WriteToUDP([]byte(responseMessage), clientAddr)
@@ -117,7 +111,7 @@ func runServer(logFile *os.File) {
 		log.Printf("Sent response to %s: %s\n", clientAddr.String(), responseMessage)
 
 		// Log the result of the test (round-trip time or any other result)
-		log.Printf("Test result for client %s: Round-trip time: %v\n", clientAddr.String(), roundTripTime)
+		log.Printf("Test result for client %s: Sent timestamp: %v\n", clientAddr.String(), clientTimestamp)
 	}
 }
 
@@ -187,21 +181,33 @@ func runClient(logFile *os.File) {
 		return
 	}
 
-	// Set a timeout for receiving the response (e.g., 5 seconds)
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	// Log the sent message
+	log.Printf("Client sent message: %s\n", message)
 
 	// Wait for the reply (TWAMP response)
 	response := make([]byte, 1024)
 	_, err = conn.Read(response)
 	if err != nil {
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-			log.Println("Timeout occurred while waiting for server response.")
-		} else {
-			log.Println("Error reading reply:", err)
-		}
+		log.Println("Error reading reply:", err)
 		return
 	}
 
-	// Log the round-trip time (RTT) received from the server
-	log.Printf("Client received response: %s\n", string(response))
+	// The server will send back the timestamp it received
+	// We assume the response is in the format: "Round-trip time: <timestamp>"
+	receivedResponse := string(response)
+	log.Printf("Client received response: %s\n", receivedResponse)
+
+	// Extract the server's timestamp from the response (it should be in RFC3339 format)
+	var serverTimestamp time.Time
+	_, err = fmt.Sscanf(receivedResponse, "Round-trip time: %s", &serverTimestamp)
+	if err != nil {
+		log.Println("Error parsing timestamp from response:", err)
+		return
+	}
+
+	// Calculate RTT by subtracting the client's sent time from the server's response time
+	rtt := time.Now().Sub(serverTimestamp)
+
+	// Log the round-trip time
+	log.Printf("Client calculated RTT: %v\n", rtt)
 }
