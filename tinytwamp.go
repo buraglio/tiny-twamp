@@ -185,7 +185,7 @@ func runClient(logFile *os.File) {
 	// Log the sent message
 	log.Printf("Client sent message: %s\n", message)
 
-	// Set a buffer size that's large enough for the response, but not too large
+	// Wait for the reply (TWAMP response)
 	response := make([]byte, 128)
 	_, err = conn.Read(response)
 	if err != nil {
@@ -216,7 +216,7 @@ func runClient(logFile *os.File) {
 		return
 	}
 
-	// Calculate RTT by subtracting the client's sent time from the server's response time
+	// Calculate RTT by subtracting the timestamp from the time we received the response
 	rtt := time.Now().Sub(parsedServerTimestamp)
 
 	// Log the round-trip time
