@@ -58,6 +58,7 @@ func main() {
 	}
 }
 
+// TWAMP Test Server (interactive mode)
 func runServer(logFile *os.File) {
 	// Listen on UDP port 862 for incoming requests, using IPv6
 	addr := net.UDPAddr{
@@ -89,8 +90,9 @@ func runServer(logFile *os.File) {
 		receivedTimeString := string(buf[:n]) // The message sent by the client
 		var clientTimestamp time.Time
 
-		// Parse the timestamp from the client's message
-		_, err = fmt.Sscanf(receivedTimeString, "Timestamp: %s", &clientTimestamp)
+		// Use time.Parse to parse the timestamp from the received message
+		// The timestamp format is RFC3339 (e.g., "2025-03-31T11:18:55-05:00")
+		clientTimestamp, err = time.Parse(time.RFC3339, receivedTimeString[11:]) // Skipping "Timestamp: "
 		if err != nil {
 			log.Printf("Error parsing timestamp from client packet: %v\n", err)
 			continue

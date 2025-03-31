@@ -82,3 +82,7 @@
 2025/03/31 11:11:38 TWAMP server is listening on IPv6 port 862...
 2025/03/31 11:13:24 Received test packet from [fd7a:115c:a1e0::e501:c016]:50047: Timestamp: 2025-03-31T11:13:24-05:00
 2025/03/31 11:13:24 Error parsing timestamp from client packet: can't scan type: *time.Time
+2025/03/31 11:18:36 Logging started
+2025/03/31 11:18:36 TWAMP server is listening on IPv6 port 862...
+2025/03/31 11:18:55 Received test packet from [fd7a:115c:a1e0::e501:c016]:38162: Timestamp: 2025-03-31T11:18:55-05:00
+2025/03/31 11:18:55 Error parsing timestamp from client packet: can't scan type: *time.Time
