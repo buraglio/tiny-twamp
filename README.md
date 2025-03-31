@@ -4,6 +4,10 @@
 This is a simple implementation of a Two-Way Active Measurement Protocol (TWAMP) server and client in a single Go binary. The server can run interactively or as a daemon, and the client can perform round-trip time (RTT) tests between itself and the server. Logs of each test are captured on both the client and the server side, and can be logged to a file.
 The client can be run from CRON to facilitate regular, ongoing tests. This binary should have a small enough memory and CPU requirement that it can be built and run on nearly anything and should listen and function on IPv6 as well as legacy IP (but is only tested under the current internet protocol, IPv6)
 
+## Production use
+Yeah, probably don't. 
+This probably shouldn't be used for production. The RTT processing is quite basic and *definitely* suboptimal. It's "consistent", but it's not "correct", mostly because I am very inexperienced in development.
+
 ## Features
 
 - **TWAMP Server**: Listens for test packets from a client and responds with an echo.

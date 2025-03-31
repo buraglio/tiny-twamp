@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -85,22 +86,33 @@ func runServer(logFile *os.File) {
 		// Log the incoming request with timestamp and client info
 		log.Printf("Received test packet from %s: %s\n", clientAddr.String(), string(buf[:n]))
 
-		// Here, we can handle the incoming TWAMP request
-		// In a real scenario, we would process the TWAMP packet and send a reply
-		// For now, we just simulate an echo
-		_, err = conn.WriteToUDP(buf[:n], clientAddr)
+		// Step 1: Parse the received packet to extract the timestamp
+		receivedTimeString := string(buf[:n]) // The message sent by the client
+		var clientTimestamp time.Time
+
+		// Use time.Parse to parse the timestamp from the received message
+		// The timestamp format is RFC3339 (e.g., "2025-03-31T11:18:55-05:00")
+		clientTimestamp, err = time.Parse(time.RFC3339, receivedTimeString[11:]) // Skipping "Timestamp: "
+		if err != nil {
+			log.Printf("Error parsing timestamp from client packet: %v\n", err)
+			continue
+		}
+
+		// Step 2: Send the timestamp back to the client as part of the response
+		responseMessage := fmt.Sprintf("Round-trip time: %s", clientTimestamp.Format(time.RFC3339))
+
+		// Send the result back to the client
+		_, err = conn.WriteToUDP([]byte(responseMessage), clientAddr)
 		if err != nil {
 			log.Println("Error sending to client:", err)
 			continue
 		}
 
 		// Log the response sent to the client
-		log.Printf("Sent response to %s\n", clientAddr.String())
+		log.Printf("Sent response to %s: %s\n", clientAddr.String(), responseMessage)
 
-		// Log the result of the test (e.g., round-trip time or any other result)
-		// This assumes the round-trip time is sent as a part of the message from the client
-		// Simulate that the client sends the result back as a message
-		log.Printf("Test result for client %s: Round-trip time simulated\n", clientAddr.String())
+		// Log the result of the test (round-trip time or any other result)
+		log.Printf("Test result for client %s: Sent timestamp: %v\n", clientAddr.String(), clientTimestamp)
 	}
 }
 
@@ -159,36 +171,54 @@ func runClient(logFile *os.File) {
 	}
 	defer conn.Close()
 
-	// Send a test message (TWAMP request)
-	message := []byte("TWAMP test message")
-	startTime := time.Now()
-	_, err = conn.Write(message)
+	// Get the current timestamp for the test
+	currentTime := time.Now()
+
+	// Send a test message with the timestamp
+	message := fmt.Sprintf("Timestamp: %s", currentTime.Format(time.RFC3339)) // Format timestamp in RFC3339
+	_, err = conn.Write([]byte(message))
 	if err != nil {
 		log.Println("Error sending message:", err)
 		return
 	}
 
+	// Log the sent message
+	log.Printf("Client sent message: %s\n", message)
+
 	// Wait for the reply (TWAMP response)
-	_, err = conn.Read(make([]byte, 1024))
+	response := make([]byte, 128)
+	_, err = conn.Read(response)
 	if err != nil {
 		log.Println("Error reading reply:", err)
 		return
 	}
-	endTime := time.Now()
 
-	// Calculate round-trip time
-	roundTripTime := endTime.Sub(startTime)
-	log.Printf("Round-trip time: %v\n", roundTripTime)
+	// Trim the extra null bytes from the response
+	trimmedResponse := strings.Trim(string(response), "\x00")
 
-	// Send round-trip time back to the server
-	// In a real-world scenario, you would send the round-trip time as part of the response
-	responseMessage := fmt.Sprintf("Round-trip time: %v", roundTripTime)
-	_, err = conn.Write([]byte(responseMessage))
+	// The server will send back the timestamp it received
+	// We assume the response is in the format: "Round-trip time: <timestamp>"
+	log.Printf("Client received response: %s\n", trimmedResponse)
+
+	// Extract the timestamp from the server's response
+	// Assuming the server response is in the format: "Round-trip time: <timestamp>"
+	var serverTimestamp string
+	_, err = fmt.Sscanf(trimmedResponse, "Round-trip time: %s", &serverTimestamp)
 	if err != nil {
-		log.Println("Error sending round-trip time back to server:", err)
+		log.Println("Error parsing timestamp from response:", err)
 		return
 	}
 
-	// Log the round-trip time for the client
-	log.Printf("Client logged round-trip time: %v", roundTripTime)
+	// Parse the server timestamp (received as a string) into a time.Time object
+	parsedServerTimestamp, err := time.Parse(time.RFC3339, serverTimestamp)
+	if err != nil {
+		log.Println("Error parsing server timestamp:", err)
+		return
+	}
+
+	// Calculate RTT by subtracting the timestamp from the time we received the response
+	rtt := time.Now().Sub(parsedServerTimestamp)
+
+	// Log the round-trip time
+	log.Printf("Client calculated RTT: %v\n", rtt)
 }

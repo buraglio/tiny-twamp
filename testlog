@@ -68,3 +68,55 @@
 2025/03/29 14:47:20 Test result for client [fd7a:115c:a1e0::e501:c016]:50046: Round-trip time simulated
 2025/03/29 14:49:16 Logging started
 2025/03/29 14:49:16 TWAMP server is listening on IPv6 port 862...
+2025/03/31 11:06:35 Logging started
+2025/03/31 11:06:35 TWAMP server is listening on IPv6 port 862...
+2025/03/31 11:07:01 Received test packet from [fd7a:115c:a1e0::e501:c016]:48423: TWAMP test message
+2025/03/31 11:07:01 Sent response to [fd7a:115c:a1e0::e501:c016]:48423: Round-trip time: 458ns
+2025/03/31 11:07:01 Test result for client [fd7a:115c:a1e0::e501:c016]:48423: Round-trip time: 458ns
+2025/03/31 11:07:13 Logging started
+2025/03/31 11:07:13 TWAMP server is listening on IPv6 port 862...
+2025/03/31 11:07:27 Received test packet from [fd7a:115c:a1e0::e501:c016]:56086: TWAMP test message
+2025/03/31 11:07:27 Sent response to [fd7a:115c:a1e0::e501:c016]:56086: Round-trip time: 250ns
+2025/03/31 11:07:27 Test result for client [fd7a:115c:a1e0::e501:c016]:56086: Round-trip time: 250ns
+2025/03/31 11:11:38 Logging started
+2025/03/31 11:11:38 TWAMP server is listening on IPv6 port 862...
+2025/03/31 11:13:24 Received test packet from [fd7a:115c:a1e0::e501:c016]:50047: Timestamp: 2025-03-31T11:13:24-05:00
+2025/03/31 11:13:24 Error parsing timestamp from client packet: can't scan type: *time.Time
+2025/03/31 11:18:36 Logging started
+2025/03/31 11:18:36 TWAMP server is listening on IPv6 port 862...
+2025/03/31 11:18:55 Received test packet from [fd7a:115c:a1e0::e501:c016]:38162: Timestamp: 2025-03-31T11:18:55-05:00
+2025/03/31 11:18:55 Error parsing timestamp from client packet: can't scan type: *time.Time
+2025/03/31 11:21:16 Logging started
+2025/03/31 11:21:16 TWAMP server is listening on IPv6 port 862...
+2025/03/31 11:21:21 Received test packet from [fd7a:115c:a1e0::e501:c016]:48130: Timestamp: 2025-03-31T11:21:21-05:00
+2025/03/31 11:21:21 Sent response to [fd7a:115c:a1e0::e501:c016]:48130: Round-trip time: 543.754ms
+2025/03/31 11:21:21 Test result for client [fd7a:115c:a1e0::e501:c016]:48130: Round-trip time: 543.754ms
+2025/03/31 11:21:36 Received test packet from [fd7a:115c:a1e0::e501:c016]:35416: Timestamp: 2025-03-31T11:21:36-05:00
+2025/03/31 11:21:36 Sent response to [fd7a:115c:a1e0::e501:c016]:35416: Round-trip time: 809.929ms
+2025/03/31 11:21:36 Test result for client [fd7a:115c:a1e0::e501:c016]:35416: Round-trip time: 809.929ms
+2025/03/31 11:21:42 Received test packet from [fd7a:115c:a1e0::e501:c016]:34216: Timestamp: 2025-03-31T11:21:42-05:00
+2025/03/31 11:21:42 Sent response to [fd7a:115c:a1e0::e501:c016]:34216: Round-trip time: 240.907ms
+2025/03/31 11:21:42 Test result for client [fd7a:115c:a1e0::e501:c016]:34216: Round-trip time: 240.907ms
+2025/03/31 11:21:53 Received test packet from [fd7a:115c:a1e0::e501:c016]:54433: Timestamp: 2025-03-31T11:21:53-05:00
+2025/03/31 11:21:53 Sent response to [fd7a:115c:a1e0::e501:c016]:54433: Round-trip time: 374.65ms
+2025/03/31 11:21:53 Test result for client [fd7a:115c:a1e0::e501:c016]:54433: Round-trip time: 374.65ms
+2025/03/31 11:22:06 Received test packet from [fd7a:115c:a1e0::e501:c016]:38212: Timestamp: 2025-03-31T11:22:06-05:00
+2025/03/31 11:22:06 Sent response to [fd7a:115c:a1e0::e501:c016]:38212: Round-trip time: 604.897ms
+2025/03/31 11:22:06 Test result for client [fd7a:115c:a1e0::e501:c016]:38212: Round-trip time: 604.897ms
+2025/03/31 11:29:29 Received test packet from [fd7a:115c:a1e0::e501:c016]:53778: Timestamp: 2025-03-31T11:29:29-05:00
+2025/03/31 11:29:29 Sent response to [fd7a:115c:a1e0::e501:c016]:53778: Round-trip time: 377.832ms
+2025/03/31 11:29:29 Test result for client [fd7a:115c:a1e0::e501:c016]:53778: Round-trip time: 377.832ms
+2025/03/31 11:29:57 Received test packet from [fd7a:115c:a1e0::e501:c016]:59282: Timestamp: 2025-03-31T11:29:57-05:00
+2025/03/31 11:29:57 Sent response to [fd7a:115c:a1e0::e501:c016]:59282: Round-trip time: 926.886ms
+2025/03/31 11:29:57 Test result for client [fd7a:115c:a1e0::e501:c016]:59282: Round-trip time: 926.886ms
+2025/03/31 11:30:24 Received test packet from [fd7a:115c:a1e0::5201:5824]:43439: Timestamp: 2025-03-31T10:30:24-06:00
+2025/03/31 11:30:24 Sent response to [fd7a:115c:a1e0::5201:5824]:43439: Round-trip time: 810.375ms
+2025/03/31 11:30:24 Test result for client [fd7a:115c:a1e0::5201:5824]:43439: Round-trip time: 810.375ms
+2025/03/31 11:31:07 Received test packet from [fd7a:115c:a1e0::5201:5824]:55400: Timestamp: 2025-03-31T10:31:07-06:00
+2025/03/31 11:31:07 Sent response to [fd7a:115c:a1e0::5201:5824]:55400: Round-trip time: 542.162ms
+2025/03/31 11:31:07 Test result for client [fd7a:115c:a1e0::5201:5824]:55400: Round-trip time: 542.162ms
+2025/03/31 11:31:10 Received test packet from [fd7a:115c:a1e0::5201:5824]:55718: Timestamp: 2025-03-31T10:31:10-06:00
+2025/03/31 11:31:10 Sent response to [fd7a:115c:a1e0::5201:5824]:55718: Round-trip time: 970.304ms
+2025/03/31 11:31:10 Test result for client [fd7a:115c:a1e0::5201:5824]:55718: Round-trip time: 970.304ms
+2025/03/31 11:32:03 Logging started
+2025/03/31 11:32:03 TWAMP server is listening on IPv6 port 862...
