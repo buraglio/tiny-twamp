@@ -58,7 +58,6 @@ func main() {
 	}
 }
 
-// TWAMP Test Server (interactive mode)
 func runServer(logFile *os.File) {
 	// Listen on UDP port 862 for incoming requests, using IPv6
 	addr := net.UDPAddr{
@@ -91,7 +90,6 @@ func runServer(logFile *os.File) {
 		var clientTimestamp time.Time
 
 		// Parse the timestamp from the client's message
-		// For simplicity, assume the format is "Timestamp: <timestamp>"
 		_, err = fmt.Sscanf(receivedTimeString, "Timestamp: %s", &clientTimestamp)
 		if err != nil {
 			log.Printf("Error parsing timestamp from client packet: %v\n", err)
@@ -187,11 +185,18 @@ func runClient(logFile *os.File) {
 		return
 	}
 
+	// Set a timeout for receiving the response (e.g., 5 seconds)
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
 	// Wait for the reply (TWAMP response)
 	response := make([]byte, 1024)
 	_, err = conn.Read(response)
 	if err != nil {
-		log.Println("Error reading reply:", err)
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			log.Println("Timeout occurred while waiting for server response.")
+		} else {
+			log.Println("Error reading reply:", err)
+		}
 		return
 	}
 
