@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -184,23 +185,25 @@ func runClient(logFile *os.File) {
 	// Log the sent message
 	log.Printf("Client sent message: %s\n", message)
 
-	// Wait for the reply (TWAMP response)
-	response := make([]byte, 1024)
+	// Set a buffer size that's large enough for the response, but not too large
+	response := make([]byte, 128)
 	_, err = conn.Read(response)
 	if err != nil {
 		log.Println("Error reading reply:", err)
 		return
 	}
 
+	// Trim the extra null bytes from the response
+	trimmedResponse := strings.Trim(string(response), "\x00")
+
 	// The server will send back the timestamp it received
 	// We assume the response is in the format: "Round-trip time: <timestamp>"
-	receivedResponse := string(response)
-	log.Printf("Client received response: %s\n", receivedResponse)
+	log.Printf("Client received response: %s\n", trimmedResponse)
 
 	// Extract the timestamp from the server's response
 	// Assuming the server response is in the format: "Round-trip time: <timestamp>"
 	var serverTimestamp string
-	_, err = fmt.Sscanf(receivedResponse, "Round-trip time: %s", &serverTimestamp)
+	_, err = fmt.Sscanf(trimmedResponse, "Round-trip time: %s", &serverTimestamp)
 	if err != nil {
 		log.Println("Error parsing timestamp from response:", err)
 		return
