@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -192,15 +193,17 @@ func runClient(logFile *os.File) {
 		return
 	}
 
+	// Trim the extra null bytes from the response
+	trimmedResponse := strings.Trim(string(response), "\x00")
+
 	// The server will send back the timestamp it received
 	// We assume the response is in the format: "Round-trip time: <timestamp>"
-	receivedResponse := string(response)
-	log.Printf("Client received response: %s\n", receivedResponse)
+	log.Printf("Client received response: %s\n", trimmedResponse)
 
 	// Extract the timestamp from the server's response
 	// Assuming the server response is in the format: "Round-trip time: <timestamp>"
 	var serverTimestamp string
-	_, err = fmt.Sscanf(receivedResponse, "Round-trip time: %s", &serverTimestamp)
+	_, err = fmt.Sscanf(trimmedResponse, "Round-trip time: %s", &serverTimestamp)
 	if err != nil {
 		log.Println("Error parsing timestamp from response:", err)
 		return
