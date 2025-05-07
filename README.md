@@ -6,8 +6,7 @@ The client can be run from CRON to facilitate regular, ongoing tests. This binar
 
 ## Production use
 Yeah, maybe? I'm a very amateurish developer who is only learning. However, the test results are reasonably accurate now.
-This probably shouldn't be used for production. The RTT processing is quite basic and *definitely* suboptimal. It's "consistent", but it's not "correct", mostly because I am very inexperienced in development.
-
+YMMV.
 ## Features
 
 - **TWAMP Server**: Listens for test packets from a client and responds with an echo.
