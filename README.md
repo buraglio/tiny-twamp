@@ -5,7 +5,7 @@ This is a simple implementation of a Two-Way Active Measurement Protocol (TWAMP)
 The client can be run from CRON to facilitate regular, ongoing tests. This binary should have a small enough memory and CPU requirement that it can be built and run on nearly anything and should listen and function on IPv6 as well as legacy IP (but is only tested under the current internet protocol, IPv6)
 
 ## Production use
-Yeah, probably don't. 
+Yeah, maybe? I'm a very amateurish developer who is only learning. However, the test results are reasonably accurate now.
 This probably shouldn't be used for production. The RTT processing is quite basic and *definitely* suboptimal. It's "consistent", but it's not "correct", mostly because I am very inexperienced in development.
 
 ## Features
@@ -16,6 +16,7 @@ This probably shouldn't be used for production. The RTT processing is quite basi
 - Client request logs (including the test message sent).
 - Server response logs (including the response sent).
 - Test result logs (including round-trip time).
+- User defined test count (how many sequential tests to run before stopping)
 
 ## Requirements
 
@@ -74,6 +75,11 @@ or
 ```bash
 ./tinytwamp -mode client -server fd7a:115c:a1e0::1801:7746 -logfile /path/to/logfile.log
 ```
+With a user defined amount of tests to run:
+```
+./tinytwamp -mode client -server fd7a:115c:a1e0::1801:7746 -logfile /path/to/logfile.log -c 5
+```
+
 
 - Replace `fd7a:115c:a1e0::1801:7746` with the server's IPv6 address.
 - The `-logfile` flag is optional, and if omitted, logs will be printed to `stdout`.
@@ -84,6 +90,7 @@ or
 - `-server`: Specifies the server's IPv6 address (used only in client mode).
 - `-daemon`: If true, runs the server as a daemon (background process).
 - `-logfile`: Path to a file where logs will be saved. If not provided, logs will be printed to `stdout`.
+- `-count`: Hand client a count of how many times to run the test. Also uses `-c`
 
 ## Logs
 
@@ -93,15 +100,21 @@ or
 
 ### Server Logs:
 ```
-2025/03/29 14:09:01 Received test packet from [fd7a:115c:a1e0::1801:7746]: "TWAMP test message"
-2025/03/29 14:09:01 Sent response to [fd7a:115c:a1e0::1801:7746]
-2025/03/29 14:09:01 Test result for client [fd7a:115c:a1e0::1801:7746]: Round-trip time received: Round-trip time: 20ms
+2025/05/07 13:58:26 Received test packet from [fd7a:115c:a1e0::e501:c016]:51027: Timestamp: 2025-05-07T13:58:26-05:00
+2025/05/07 13:58:26 Sent response to [fd7a:115c:a1e0::e501:c016]:51027: Round-trip time: 2025-05-07T13:58:26-05:00
+2025/05/07 13:58:26 Test result for client [fd7a:115c:a1e0::e501:c016]:51027: Sent timestamp: 2025-05-07 13:58:26 -0500 CDT
+2025/05/07 13:58:27 Received test packet from [fd7a:115c:a1e0::e501:c016]:51027: Timestamp: 2025-05-07T13:58:27-05:00
+2025/05/07 13:58:27 Sent response to [fd7a:115c:a1e0::e501:c016]:51027: Round-trip time: 2025-05-07T13:58:27-05:00
+2025/05/07 13:58:27 Test result for client [fd7a:115c:a1e0::e501:c016]:51027: Sent timestamp: 2025-05-07 13:58:27 -0500 CDT
 ```
 
 ### Client Logs:
 ```
-2025/03/29 14:09:01 Round-trip time: 20ms
-2025/03/29 14:09:01 Client logged round-trip time: 20ms
+2025/05/07 13:58:26 Client received response: Round-trip time: 2025-05-07T13:58:26-05:00
+2025/05/07 13:58:26 Client calculated RTT: 20.428901ms
+2025/05/07 13:58:27 Client sent message: Timestamp: 2025-05-07T13:58:27-05:00
+2025/05/07 13:58:28 Client received response: Round-trip time: 2025-05-07T13:58:27-05:00
+2025/05/07 13:58:28 Client calculated RTT: 20.260496ms
 ```
 
 ## Contribution
