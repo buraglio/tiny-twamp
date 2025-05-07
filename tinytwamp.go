@@ -6,14 +6,12 @@ import (
 	"log"
 	"net"
 	"os"
-	"os/exec"
 	"strings"
-	"syscall"
 	"time"
 )
 
 const (
-	serverPort = ":862" // TWAMP uses UDP port 862
+	serverPort = ":862" // Standard TWAMP uses UDP port 862
 )
 
 var (
@@ -21,6 +19,7 @@ var (
 	serverAddr  = flag.String("server", "localhost", "TWAMP server address (client mode only)")
 	runAsDaemon = flag.Bool("daemon", false, "Run server as a daemon")
 	logFilePath = flag.String("logfile", "", "Log file path (optional)")
+	testCount   = flag.Int("c", 1, "Number of tests to run (client mode only)") // Flag for test count
 )
 
 func main() {
@@ -47,7 +46,7 @@ func main() {
 	switch *mode {
 	case "server":
 		if *runAsDaemon {
-			runServerAsDaemon() // Pass the log file path to the daemonized process
+			runServerAsDaemon(logFile) // Pass the log file path to the daemonized process
 		} else {
 			runServer(logFile)
 		}
@@ -59,7 +58,13 @@ func main() {
 	}
 }
 
-// TWAMP Test Server (interactive mode)
+// Daemon Mode: Server
+func runServerAsDaemon(logFile *os.File) {
+	log.Println("Server is running as a daemon...")
+	runServer(logFile) // Reuse the original runServer function because I am lazy
+}
+
+// Original Server Function
 func runServer(logFile *os.File) {
 	// Listen on UDP port 862 for incoming requests, using IPv6
 	addr := net.UDPAddr{
@@ -115,45 +120,7 @@ func runServer(logFile *os.File) {
 	}
 }
 
-// TWAMP Test Server (daemon mode)
-func runServerAsDaemon() {
-	// Fork the process to run it as a daemon
-	// Detach the process from the terminal and run it in the background
-	attr := syscall.SysProcAttr{
-		Setsid: true, // Start a new session and detach from the terminal
-	}
-
-	cmd := exec.Command(os.Args[0], "-mode", "server", "-logfile", *logFilePath)
-	cmd.SysProcAttr = &attr
-
-	// Set up the log file for the daemon
-	if *logFilePath != "" {
-		logFile, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Println("Error opening log file:", err)
-			return
-		}
-		defer logFile.Close()
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
-	} else {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
-
-	// Start the server as a daemon, redirecting output to the log file
-	err := cmd.Start()
-	if err != nil {
-		log.Println("Error starting daemon:", err)
-		return
-	}
-	log.Println("Server is running as a daemon...")
-
-	// Exit the current process (parent) immediately
-	os.Exit(0)
-}
-
-// TWAMP Client
+// Client Function
 func runClient(logFile *os.File) {
 	// Connect to the TWAMP server over IPv6
 	server := fmt.Sprintf("[%s]:862", *serverAddr)
@@ -170,47 +137,53 @@ func runClient(logFile *os.File) {
 	}
 	defer conn.Close()
 
-	// Get the current timestamp for the test (before sending the packet)
-	startTime := time.Now()
+	// Loop for the specified number of tests
+	for i := 0; i < *testCount; i++ {
+		// Get the current timestamp for the test (before sending the packet)
+		startTime := time.Now()
 
-	// Send a test message with the timestamp
-	message := fmt.Sprintf("Timestamp: %s", startTime.Format(time.RFC3339)) // Format timestamp in RFC3339
-	_, err = conn.Write([]byte(message))
-	if err != nil {
-		log.Println("Error sending message:", err)
-		return
+		// Send a test message with the timestamp
+		message := fmt.Sprintf("Timestamp: %s", startTime.Format(time.RFC3339)) // Format timestamp in RFC3339
+		_, err = conn.Write([]byte(message))
+		if err != nil {
+			log.Println("Error sending message:", err)
+			return
+		}
+
+		// Log the sent message
+		log.Printf("Client sent message: %s\n", message)
+
+		// Wait for the reply (TWAMP response)
+		response := make([]byte, 128)
+		_, err = conn.Read(response)
+		if err != nil {
+			log.Println("Error reading reply:", err)
+			return
+		}
+
+		// Trim the extra null bytes from the response
+		trimmedResponse := strings.Trim(string(response), "\x00")
+
+		// The server will send back the timestamp it received
+		// We assume the response is in the format: "Round-trip time: <timestamp>"
+		log.Printf("Client received response: %s\n", trimmedResponse)
+
+		// Extract the timestamp from the server's response
+		// Assuming the server response is in the format: "Round-trip time: <timestamp>"
+		var serverTimestamp string
+		_, err = fmt.Sscanf(trimmedResponse, "Round-trip time: %s", &serverTimestamp)
+		if err != nil {
+			log.Println("Error parsing timestamp from response:", err)
+			return
+		}
+
+		// Calculate RTT by subtracting the client's sent time from the time we received the response
+		rtt := time.Since(startTime) // Calculate RTT from when the client sent the message
+
+		// Log the round-trip time
+		log.Printf("Client calculated RTT: %v\n", rtt)
+
+		// Optional: Add a delay between tests
+		time.Sleep(1 * time.Second)
 	}
-
-	// Log the sent message
-	log.Printf("Client sent message: %s\n", message)
-
-	// Wait for the reply (TWAMP response)
-	response := make([]byte, 128)
-	_, err = conn.Read(response)
-	if err != nil {
-		log.Println("Error reading reply:", err)
-		return
-	}
-
-	// Trim the extra null bytes from the response
-	trimmedResponse := strings.Trim(string(response), "\x00")
-
-	// The server will send back the timestamp it received
-	// We assume the response is in the format: "Round-trip time: <timestamp>"
-	log.Printf("Client received response: %s\n", trimmedResponse)
-
-	// Extract the timestamp from the server's response
-	// Assuming the server response is in the format: "Round-trip time: <timestamp>"
-	var serverTimestamp string
-	_, err = fmt.Sscanf(trimmedResponse, "Round-trip time: %s", &serverTimestamp)
-	if err != nil {
-		log.Println("Error parsing timestamp from response:", err)
-		return
-	}
-
-	// Calculate RTT by subtracting the client's sent time from the time we received the response
-	rtt := time.Since(startTime) // Calculate RTT from when the client sent the message
-
-	// Log the round-trip time
-	log.Printf("Client calculated RTT: %v\n", rtt)
 }
