@@ -170,11 +170,11 @@ func runClient(logFile *os.File) {
 	}
 	defer conn.Close()
 
-	// Get the current timestamp for the test
-	currentTime := time.Now()
+	// Get the current timestamp for the test (before sending the packet)
+	startTime := time.Now()
 
 	// Send a test message with the timestamp
-	message := fmt.Sprintf("Timestamp: %s", currentTime.Format(time.RFC3339)) // Format timestamp in RFC3339
+	message := fmt.Sprintf("Timestamp: %s", startTime.Format(time.RFC3339)) // Format timestamp in RFC3339
 	_, err = conn.Write([]byte(message))
 	if err != nil {
 		log.Println("Error sending message:", err)
@@ -215,8 +215,8 @@ func runClient(logFile *os.File) {
 		return
 	}
 
-	// Calculate RTT by subtracting the timestamp from the time we received the response
-	rtt := time.Now().Sub(parsedServerTimestamp)
+	// Calculate RTT by subtracting the client's sent time from the server's response time
+	rtt := time.Since(startTime) // Calculate RTT from when the client sent the message
 
 	// Log the round-trip time
 	log.Printf("Client calculated RTT: %v\n", rtt)
