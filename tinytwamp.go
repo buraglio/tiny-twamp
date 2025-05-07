@@ -208,14 +208,7 @@ func runClient(logFile *os.File) {
 		return
 	}
 
-	// Parse the server timestamp (received as a string) into a time.Time object
-	parsedServerTimestamp, err := time.Parse(time.RFC3339, serverTimestamp)
-	if err != nil {
-		log.Println("Error parsing server timestamp:", err)
-		return
-	}
-
-	// Calculate RTT by subtracting the client's sent time from the server's response time
+	// Calculate RTT by subtracting the client's sent time from the time we received the response
 	rtt := time.Since(startTime) // Calculate RTT from when the client sent the message
 
 	// Log the round-trip time
