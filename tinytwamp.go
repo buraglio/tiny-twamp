@@ -91,7 +91,6 @@ func runServer(logFile *os.File) {
 		var clientTimestamp time.Time
 
 		// Use time.Parse to parse the timestamp from the received message
-		// The timestamp format is RFC3339 (e.g., "2025-03-31T11:18:55-05:00")
 		clientTimestamp, err = time.Parse(time.RFC3339, receivedTimeString[11:]) // Skipping "Timestamp: "
 		if err != nil {
 			log.Printf("Error parsing timestamp from client packet: %v\n", err)
