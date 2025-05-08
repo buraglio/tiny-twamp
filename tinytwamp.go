@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	serverPort = ":862" // Standard TWAMP uses UDP port 862
+	serverPort = ":862" // TWAMP uses UDP port 862
 )
 
 var (
@@ -58,13 +58,13 @@ func main() {
 	}
 }
 
-// Daemon Mode: Server
+// TWAMP Test Server daemon (Updated to use the same time.Since(clientTimestamp) that is used in the client section
 func runServerAsDaemon(logFile *os.File) {
 	log.Println("Server is running as a daemon...")
-	runServer(logFile) // Reuse the original runServer function because I am lazy
+	runServer(logFile) // Reuse the original runServer function for daemon mode becase I am lazy
 }
 
-// Original Server Function
+// TWAMP Test Server (Updated to use the same time.Since(clientTimestamp) that is used in the client section
 func runServer(logFile *os.File) {
 	// Listen on UDP port 862 for incoming requests, using IPv6
 	addr := net.UDPAddr{
@@ -111,6 +111,13 @@ func runServer(logFile *os.File) {
 			log.Println("Error sending to client:", err)
 			continue
 		}
+
+		// Step 3: Calculate RTT on the server
+		// The server calculates RTT as the time difference between the server's reception time and the client's sent timestamp
+		serverRTT := time.Since(clientTimestamp) // Server's RTT = current time - received timestamp
+
+		// Log the server-calculated RTT (network delay, not processing time)
+		log.Printf("Server calculated RTT for client %s: %v\n", clientAddr.String(), serverRTT)
 
 		// Log the response sent to the client
 		log.Printf("Sent response to %s: %s\n", clientAddr.String(), responseMessage)
