@@ -805,6 +805,10 @@ var (
 	noSync      = flag.Bool("no-sync", false, "Assert clock is NOT NTP-synchronized (sets S=0 in error estimate)")
 	rateLimit   = flag.Int("rate-limit", 0, "Max packets per second per source IP on server (0 = unlimited)")
 	allowed     = flag.String("allowed", "", "Comma-separated CIDR allowlist for server (empty = allow all)")
+
+	configURL     = flag.String("config-url", "", "HTTP URL of topology JSON config (required in agent mode)")
+	configRefresh = flag.Duration("config-refresh", 0, "Config re-fetch interval (default: value from config)")
+	agentHostname = flag.String("hostname", "", "Override hostname used for topology lookup (agent mode)")
 )
 
 func main() {
@@ -853,8 +857,15 @@ func main() {
 			os.Exit(1)
 		}
 
+	case "agent":
+		if *configURL == "" {
+			fmt.Fprintf(os.Stderr, "agent mode requires -config-url\n")
+			os.Exit(1)
+		}
+		runAgent(*port, *configURL, *agentHostname, *configRefresh, synced, logFile)
+
 	default:
-		fmt.Fprintf(os.Stderr, "Invalid mode %q. Use 'client' or 'server'\n", *mode)
+		fmt.Fprintf(os.Stderr, "Invalid mode %q. Use 'client', 'server', or 'agent'\n", *mode)
 		os.Exit(1)
 	}
 }

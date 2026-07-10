@@ -3,7 +3,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -16,6 +18,14 @@ func platformHandleShutdown(s *Server, conn *net.UDPConn) {
 	s.logger.Println("Received shutdown signal")
 	s.cancel()
 	conn.Close()
+}
+
+func platformWaitForShutdown(cancel context.CancelFunc, logger *log.Logger) {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt)
+	<-sigChan
+	logger.Println("Received shutdown signal")
+	cancel()
 }
 
 func runServerAsDaemon() {

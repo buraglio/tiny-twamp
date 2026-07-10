@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -321,6 +322,89 @@ func runBurst(target HostEntry, cfg AgentConfig, hostname string, port int, sync
 	result.Jitter = jitter
 	result.LossPct = float64(cfg.BurstSize-recv) / float64(cfg.BurstSize) * 100.0
 	return result
+}
+
+// runAgent starts the four concurrent goroutines that make up agent mode.
+// It blocks until SIGINT/SIGTERM is received.
+func runAgent(port int, configURL, hostname string, configRefresh time.Duration, synced bool, logFile *os.File) {
+	out := io.Writer(os.Stdout)
+	if logFile != nil {
+		out = logFile
+	}
+	logger := log.New(out, "[TWAMP-Light-Agent] ", log.LstdFlags|log.Lmicroseconds)
+
+	// Fetch initial config — fatal on failure
+	logger.Printf("Fetching config from %s", configURL)
+	initialCfg, err := fetchConfig(configURL)
+	if err != nil {
+		logger.Fatalf("Cannot fetch initial config: %v", err)
+	}
+	logger.Printf("Config loaded: topology=%s hosts=%d probe_interval=%v",
+		initialCfg.Topology, len(initialCfg.Hosts), initialCfg.ProbeInterval)
+
+	// Resolve hostname
+	if hostname == "" {
+		h, err := os.Hostname()
+		if err != nil {
+			logger.Fatalf("Cannot determine hostname: %v", err)
+		}
+		hostname = h
+	}
+
+	// Use config_refresh from fetched config if caller didn't override
+	if configRefresh == 0 {
+		configRefresh = initialCfg.ConfigRefresh
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Wire channels
+	configCh := make(chan AgentConfig, 1)
+	resultsCh := make(chan ProbeResult, 200)
+
+	// Seed the config channel with initial config so scheduler starts immediately
+	configCh <- initialCfg
+
+	var wg sync.WaitGroup
+
+	// Goroutine 1: Config poller (sends subsequent configs)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runConfigPoller(ctx, configURL, configRefresh, configCh, logger)
+	}()
+
+	// Goroutine 2: TWAMP-Light reflector server
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		al, _ := parseAllowlist("") // agent mode: accept from all peers
+		rl := newRateLimiter(0)     // agent mode: no rate limiting (trusted peers)
+		srv := NewServer(logFile, rl, al, synced)
+		if err := srv.Start(port); err != nil {
+			logger.Printf("Server error: %v", err)
+		}
+	}()
+
+	// Goroutine 3: Probe scheduler
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runProbeScheduler(ctx, configCh, resultsCh, hostname, port, synced, logFile, logger)
+	}()
+
+	// Goroutine 4: InfluxDB writer
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		w := newInfluxWriter(initialCfg.InfluxDB, logger)
+		w.run(ctx, resultsCh)
+	}()
+
+	// Wait for shutdown signal then cancel context
+	platformWaitForShutdown(cancel, logger)
+	wg.Wait()
 }
 
 // runProbeScheduler drives periodic probe bursts to all configured targets.
