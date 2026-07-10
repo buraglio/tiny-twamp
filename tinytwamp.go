@@ -10,11 +10,8 @@ import (
 	"math"
 	"net"
 	"os"
-	"os/exec"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -367,7 +364,7 @@ func (s *Server) serve(conn *net.UDPConn) {
 	conn.SetReadBuffer(1 << 20)
 	conn.SetWriteBuffer(1 << 20)
 
-	go s.handleShutdown(conn)
+	go platformHandleShutdown(s, conn)
 
 	for {
 		select {
@@ -455,14 +452,6 @@ func (s *Server) handleTestPacket(conn *net.UDPConn, data []byte, clientAddr *ne
 		response.SenderTimestamp.Format(time.RFC3339Nano))
 }
 
-func (s *Server) handleShutdown(conn *net.UDPConn) {
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<-sigChan
-	s.logger.Println("Received shutdown signal")
-	s.cancel()
-	conn.Close()
-}
 
 // ============================================================================
 // TWAMP-Light Client (Session-Sender)
@@ -768,46 +757,5 @@ func main() {
 	}
 }
 
-// runServerAsDaemon re-executes the binary without -daemon, forwarding all
-// other flags so nothing is silently dropped.
-func runServerAsDaemon() {
-	// Rebuild args: everything except -daemon / --daemon.
-	var args []string
-	skip := false
-	for _, a := range os.Args[1:] {
-		if a == "-daemon" || a == "--daemon" {
-			skip = true
-			continue
-		}
-		if skip {
-			skip = false
-			continue
-		}
-		args = append(args, a)
-	}
-
-	cmd := exec.Command(os.Args[0], args...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-
-	if *logFilePath != "" {
-		lf, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-		if err != nil {
-			log.Printf("Error opening log file for daemon: %v", err)
-			return
-		}
-		defer lf.Close()
-		cmd.Stdout = lf
-		cmd.Stderr = lf
-	} else {
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-	}
-
-	if err := cmd.Start(); err != nil {
-		log.Printf("Error starting daemon: %v", err)
-		return
-	}
-
-	log.Printf("TWAMP-Light server started as daemon (PID: %d)", cmd.Process.Pid)
-	os.Exit(0)
-}
+// runServerAsDaemon and platformHandleShutdown are implemented in
+// platform_unix.go and platform_windows.go.
