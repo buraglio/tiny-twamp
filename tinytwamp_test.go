@@ -335,6 +335,14 @@ func TestParseAgentConfigBadDuration(t *testing.T) {
 	}
 }
 
+func TestParseAgentConfigNegativePadding(t *testing.T) {
+	raw := []byte(`{"topology":"mesh","padding":-1,"hosts":[]}`)
+	_, err := parseAgentConfig(raw)
+	if err == nil {
+		t.Error("expected error for negative padding, got nil")
+	}
+}
+
 func TestTargetsForMesh(t *testing.T) {
 	cfg := AgentConfig{
 		Topology: "mesh",

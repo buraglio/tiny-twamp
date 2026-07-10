@@ -129,7 +129,7 @@ func (w *InfluxWriter) run(ctx context.Context, results <-chan ProbeResult) {
 // write posts a Line Protocol body to InfluxDB with exponential backoff retry.
 func (w *InfluxWriter) write(ctx context.Context, body string) error {
 	q := url.Values{"org": {w.cfg.Org}, "bucket": {w.cfg.Bucket}, "precision": {"ns"}}
-	endpoint := w.cfg.URL + "/api/v2/write?" + q.Encode()
+	endpoint := strings.TrimRight(w.cfg.URL, "/") + "/api/v2/write?" + q.Encode()
 
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {

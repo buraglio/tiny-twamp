@@ -136,6 +136,10 @@ func parseAgentConfig(data []byte) (AgentConfig, error) {
 		burstSize = 5
 	}
 
+	if raw.Padding < 0 {
+		return AgentConfig{}, fmt.Errorf("padding must be >= 0, got %d", raw.Padding)
+	}
+
 	hosts := make([]HostEntry, len(raw.Hosts))
 	for i, h := range raw.Hosts {
 		hosts[i] = HostEntry{Name: h.Name, Address: h.Address, Site: h.Site}
@@ -207,9 +211,11 @@ func (c AgentConfig) targetsFor(hostname string) []HostEntry {
 	return targets
 }
 
+var configHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
 // fetchConfig fetches and parses the topology JSON from url.
 func fetchConfig(url string) (AgentConfig, error) {
-	resp, err := http.Get(url) //nolint:gosec // URL is operator-supplied config
+	resp, err := configHTTPClient.Get(url) //nolint:gosec // URL is operator-supplied config
 	if err != nil {
 		return AgentConfig{}, fmt.Errorf("fetch config: %w", err)
 	}
@@ -217,7 +223,7 @@ func fetchConfig(url string) (AgentConfig, error) {
 	if resp.StatusCode != http.StatusOK {
 		return AgentConfig{}, fmt.Errorf("config server returned %d", resp.StatusCode)
 	}
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return AgentConfig{}, fmt.Errorf("read config body: %w", err)
 	}
