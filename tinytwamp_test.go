@@ -265,6 +265,133 @@ func TestAllowlistInvalidCIDR(t *testing.T) {
 }
 
 // ============================================================================
+// Agent config parsing
+// ============================================================================
+
+func TestParseAgentConfigMesh(t *testing.T) {
+	raw := []byte(`{
+		"topology": "mesh",
+		"probe_interval": "30s",
+		"burst_size": 5,
+		"burst_interval": "200ms",
+		"packet_timeout": "5s",
+		"padding": 0,
+		"config_refresh": "5m",
+		"influxdb": {
+			"url": "http://influx:8086",
+			"token": "tok",
+			"org": "myorg",
+			"bucket": "twamp"
+		},
+		"hosts": [
+			{"name": "a", "address": "10.0.0.1", "site": "east"},
+			{"name": "b", "address": "10.0.0.2", "site": "west"}
+		],
+		"hub_spoke": {"enabled": false, "hub": ""}
+	}`)
+	cfg, err := parseAgentConfig(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Topology != "mesh" {
+		t.Errorf("Topology = %q, want mesh", cfg.Topology)
+	}
+	if cfg.ProbeInterval != 30*time.Second {
+		t.Errorf("ProbeInterval = %v, want 30s", cfg.ProbeInterval)
+	}
+	if cfg.BurstSize != 5 {
+		t.Errorf("BurstSize = %d, want 5", cfg.BurstSize)
+	}
+	if len(cfg.Hosts) != 2 {
+		t.Errorf("len(Hosts) = %d, want 2", len(cfg.Hosts))
+	}
+	if cfg.InfluxDB.URL != "http://influx:8086" {
+		t.Errorf("InfluxDB.URL = %q", cfg.InfluxDB.URL)
+	}
+}
+
+func TestParseAgentConfigInvalid(t *testing.T) {
+	_, err := parseAgentConfig([]byte(`not json`))
+	if err == nil {
+		t.Error("expected error for invalid JSON, got nil")
+	}
+}
+
+func TestParseAgentConfigMissingTopology(t *testing.T) {
+	raw := []byte(`{"hosts": [{"name":"a","address":"1.2.3.4","site":"x"}]}`)
+	_, err := parseAgentConfig(raw)
+	if err == nil {
+		t.Error("expected error for missing topology, got nil")
+	}
+}
+
+func TestTargetsForMesh(t *testing.T) {
+	cfg := AgentConfig{
+		Topology: "mesh",
+		Hosts: []HostEntry{
+			{Name: "a", Address: "10.0.0.1", Site: "east"},
+			{Name: "b", Address: "10.0.0.2", Site: "west"},
+			{Name: "c", Address: "10.0.0.3", Site: "eu"},
+		},
+		HubSpoke: HubSpokeConfig{Enabled: false},
+	}
+	targets := cfg.targetsFor("a")
+	if len(targets) != 2 {
+		t.Fatalf("mesh from 'a': want 2 targets, got %d", len(targets))
+	}
+	for _, tgt := range targets {
+		if tgt.Name == "a" {
+			t.Error("mesh should not include self")
+		}
+	}
+}
+
+func TestTargetsForHubAsHub(t *testing.T) {
+	cfg := AgentConfig{
+		Topology: "hub-spoke",
+		Hosts: []HostEntry{
+			{Name: "hub",    Address: "10.0.0.1", Site: "core"},
+			{Name: "spoke1", Address: "10.0.0.2", Site: "east"},
+			{Name: "spoke2", Address: "10.0.0.3", Site: "west"},
+		},
+		HubSpoke: HubSpokeConfig{Enabled: true, Hub: "hub"},
+	}
+	targets := cfg.targetsFor("hub")
+	if len(targets) != 2 {
+		t.Fatalf("hub should probe 2 spokes, got %d", len(targets))
+	}
+}
+
+func TestTargetsForHubAsSpoke(t *testing.T) {
+	cfg := AgentConfig{
+		Topology: "hub-spoke",
+		Hosts: []HostEntry{
+			{Name: "hub",    Address: "10.0.0.1", Site: "core"},
+			{Name: "spoke1", Address: "10.0.0.2", Site: "east"},
+		},
+		HubSpoke: HubSpokeConfig{Enabled: true, Hub: "hub"},
+	}
+	targets := cfg.targetsFor("spoke1")
+	if len(targets) != 1 || targets[0].Name != "hub" {
+		t.Fatalf("spoke should probe only hub, got %+v", targets)
+	}
+}
+
+func TestTargetsForUnknownHost(t *testing.T) {
+	cfg := AgentConfig{
+		Topology: "mesh",
+		Hosts: []HostEntry{
+			{Name: "a", Address: "10.0.0.1", Site: "east"},
+		},
+		HubSpoke: HubSpokeConfig{Enabled: false},
+	}
+	targets := cfg.targetsFor("not-in-list")
+	if len(targets) != 0 {
+		t.Errorf("unknown host should get 0 targets, got %d", len(targets))
+	}
+}
+
+// ============================================================================
 // Statistics helpers (stddev, jitter)
 // ============================================================================
 
