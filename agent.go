@@ -1,8 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
+	"math"
+	"net/http"
+	"os"
 	"time"
 )
 
@@ -198,4 +204,173 @@ func (c AgentConfig) targetsFor(hostname string) []HostEntry {
 		}
 	}
 	return targets
+}
+
+// fetchConfig fetches and parses the topology JSON from url.
+func fetchConfig(url string) (AgentConfig, error) {
+	resp, err := http.Get(url) //nolint:gosec // URL is operator-supplied config
+	if err != nil {
+		return AgentConfig{}, fmt.Errorf("fetch config: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return AgentConfig{}, fmt.Errorf("config server returned %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return AgentConfig{}, fmt.Errorf("read config body: %w", err)
+	}
+	return parseAgentConfig(data)
+}
+
+// runConfigPoller fetches config at startup (sends on out), then re-fetches
+// every refresh interval. On refresh failure it logs and continues with the
+// last-known config. Exits when ctx is cancelled.
+func runConfigPoller(ctx context.Context, url string, refresh time.Duration, out chan<- AgentConfig, logger *log.Logger) {
+	ticker := time.NewTicker(refresh)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			cfg, err := fetchConfig(url)
+			if err != nil {
+				logger.Printf("[Agent] config refresh failed: %v (using last-known config)", err)
+				continue
+			}
+			select {
+			case out <- cfg:
+			case <-ctx.Done():
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// runBurst fires cfg.BurstSize TWAMP-Light packets at target and returns
+// aggregated statistics as a ProbeResult.
+func runBurst(target HostEntry, cfg AgentConfig, hostname string, port int, synced bool, logFile *os.File) ProbeResult {
+	result := ProbeResult{
+		Source:   hostname,
+		Target:   target.Name,
+		Site:     target.Site,
+		Topology: cfg.Topology,
+		Sent:     cfg.BurstSize,
+		SentAt:   time.Now(),
+	}
+
+	c := NewClient(
+		target.Address,
+		logFile,
+		cfg.BurstSize,
+		cfg.BurstInterval,
+		cfg.PacketTimeout,
+		port,
+		cfg.Padding,
+		synced,
+	)
+
+	rtts, recv := c.runBurst()
+	result.Recv = recv
+
+	if recv == 0 {
+		result.LossPct = 100.0
+		return result
+	}
+
+	// Compute statistics
+	var sum time.Duration
+	minR, maxR := rtts[0], rtts[0]
+	for _, r := range rtts {
+		sum += r
+		if r < minR {
+			minR = r
+		}
+		if r > maxR {
+			maxR = r
+		}
+	}
+	avg := sum / time.Duration(recv)
+
+	var variance float64
+	avgF := float64(avg)
+	for _, r := range rtts {
+		d := float64(r) - avgF
+		variance += d * d
+	}
+	stddev := time.Duration(math.Sqrt(variance / float64(recv)))
+
+	var jitterSum time.Duration
+	for i := 1; i < recv; i++ {
+		d := rtts[i] - rtts[i-1]
+		if d < 0 {
+			d = -d
+		}
+		jitterSum += d
+	}
+	var jitter time.Duration
+	if recv > 1 {
+		jitter = jitterSum / time.Duration(recv-1)
+	}
+
+	result.RttMin = minR
+	result.RttAvg = avg
+	result.RttMax = maxR
+	result.RttStddev = stddev
+	result.Jitter = jitter
+	result.LossPct = float64(cfg.BurstSize-recv) / float64(cfg.BurstSize) * 100.0
+	return result
+}
+
+// runProbeScheduler drives periodic probe bursts to all configured targets.
+// When a new AgentConfig arrives on configs it drains in-flight work and
+// restarts with the new target list. Exits when ctx is cancelled.
+func runProbeScheduler(ctx context.Context, configs <-chan AgentConfig, results chan<- ProbeResult, hostname string, port int, synced bool, logFile *os.File, logger *log.Logger) {
+	var cfg AgentConfig
+	var ticker *time.Ticker
+
+	// Wait for first config before starting ticker
+	select {
+	case cfg = <-configs:
+	case <-ctx.Done():
+		return
+	}
+
+	ticker = time.NewTicker(cfg.ProbeInterval)
+	defer ticker.Stop()
+
+	probe := func() {
+		targets := cfg.targetsFor(hostname)
+		if len(targets) == 0 {
+			logger.Printf("[Agent] %s not in hosts list or no targets — acting as reflector only", hostname)
+			return
+		}
+		for _, target := range targets {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			r := runBurst(target, cfg, hostname, port, synced, logFile)
+			select {
+			case results <- r:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
+
+	for {
+		select {
+		case newCfg := <-configs:
+			cfg = newCfg
+			ticker.Reset(cfg.ProbeInterval)
+			logger.Printf("[Agent] config updated, probing %d hosts every %v", len(cfg.Hosts), cfg.ProbeInterval)
+		case <-ticker.C:
+			probe()
+		case <-ctx.Done():
+			return
+		}
+	}
 }

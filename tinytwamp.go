@@ -629,6 +629,108 @@ func (c *Client) Run() error {
 	return nil
 }
 
+// runBurst sends c.count packets and returns the RTT slice and received count.
+// It does not print statistics. Used by agent mode.
+func (c *Client) runBurst() (rtts []time.Duration, recv int) {
+	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(c.serverAddr, fmt.Sprintf("%d", c.port)))
+	if err != nil {
+		c.logger.Printf("resolve failed: %v", err)
+		return nil, 0
+	}
+	conn, err := net.DialUDP("udp", nil, addr)
+	if err != nil {
+		c.logger.Printf("dial failed: %v", err)
+		return nil, 0
+	}
+	defer conn.Close()
+	conn.SetReadBuffer(1 << 20)
+	conn.SetWriteBuffer(1 << 20)
+
+	type result struct {
+		rtt time.Duration
+		err error
+	}
+	pending := make(map[uint32]pendingSend)
+	var pendingMu sync.Mutex
+	results := make(chan result, c.count)
+
+	recvDone := make(chan struct{})
+	go func() {
+		defer close(recvDone)
+		buf := make([]byte, 1024+c.paddingSize)
+		for {
+			conn.SetReadDeadline(time.Now().Add(c.timeout))
+			n, err := conn.Read(buf)
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					pendingMu.Lock()
+					for seq, ps := range pending {
+						if time.Since(ps.sentAt) > 2*c.timeout {
+							delete(pending, seq)
+							results <- result{err: fmt.Errorf("seq %d timed out", seq)}
+						}
+					}
+					remaining := len(pending)
+					pendingMu.Unlock()
+					if remaining == 0 {
+						return
+					}
+					continue
+				}
+				return
+			}
+			t4 := time.Now()
+			var resp TWAMPTestResponse
+			if err := resp.UnmarshalBinary(buf[:n]); err != nil {
+				continue
+			}
+			pendingMu.Lock()
+			ps, ok := pending[resp.SequenceNumber]
+			if ok {
+				delete(pending, resp.SequenceNumber)
+			}
+			pendingMu.Unlock()
+			if !ok {
+				continue
+			}
+			rtt := calculateRTT(ps.t1, resp.ReceiveTimestamp, resp.SenderTimestamp, t4)
+			results <- result{rtt: rtt}
+		}
+	}()
+
+	for i := 0; i < c.count; i++ {
+		seq := uint32(i + 1)
+		t1 := time.Now()
+		req := TWAMPTestRequest{
+			SequenceNumber: seq,
+			Timestamp:      t1,
+			ErrorEstimate:  getErrorEstimate(c.synced),
+			Padding:        make([]byte, c.paddingSize),
+		}
+		pendingMu.Lock()
+		pending[seq] = pendingSend{t1: t1, sentAt: t1}
+		pendingMu.Unlock()
+		if _, err := conn.Write(req.MarshalBinary()); err != nil {
+			pendingMu.Lock()
+			delete(pending, seq)
+			pendingMu.Unlock()
+			results <- result{err: fmt.Errorf("send failed seq=%d: %v", seq, err)}
+		}
+		if i < c.count-1 {
+			time.Sleep(c.interval)
+		}
+	}
+
+	<-recvDone
+	close(results)
+	for r := range results {
+		if r.err == nil {
+			rtts = append(rtts, r.rtt)
+		}
+	}
+	return rtts, len(rtts)
+}
+
 func (c *Client) printStats(rtts []time.Duration, sent int) {
 	received := len(rtts)
 	c.logger.Println("=== TWAMP-Light Test Statistics ===")
