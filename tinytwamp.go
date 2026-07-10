@@ -5,195 +5,182 @@ import (
 	"encoding/binary"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"math"
 	"net"
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
 
 // ============================================================================
-// RFC 5357 TWAMP Constants
+// RFC 5357 TWAMP-Light Constants
 // ============================================================================
 
+// This implementation conforms to TWAMP-Light (RFC 5357 §5), which omits the
+// TWAMP-Control TCP negotiation phase. It is interoperable with other
+// TWAMP-Light endpoints but not with full TWAMP implementations that require
+// the Control protocol.
+
 const (
-	// TWAMP uses UDP port 862 for both control and test packets
-	TWAMPPort = 862
+	defaultPort = 862
 
-	// Packet sizes for unauthenticated mode
-	TestRequestMinSize  = 14 // Minimum TWAMP-Test request packet
-	TestResponseMinSize = 40 // Minimum TWAMP-Test response packet
+	// Minimum on-wire sizes for unauthenticated mode (RFC 4656 §4.1.2)
+	testRequestBaseSize  = 14
+	testResponseBaseSize = 40
 
-	// NTP epoch offset (seconds between 1900-01-01 and 1970-01-01)
+	// NTP epoch offset: seconds between 1900-01-01 and 1970-01-01
 	ntpEpochOffset = 2208988800
 
-	// Buffer pool sizes
 	maxConcurrentPackets = 100
 )
 
 // ============================================================================
-// NTP Timestamp Functions (RFC 5357 Section 4.1.2)
+// NTP Timestamp Functions (RFC 5357 §4.1.2)
 // ============================================================================
 
-// timeToNTP converts a Go time.Time to a 64-bit NTP timestamp
-// Format: 32 bits for seconds since 1900-01-01, 32 bits for fractional seconds
 func timeToNTP(t time.Time) uint64 {
 	secs := uint64(t.Unix() + ntpEpochOffset)
-	nanos := uint64(t.Nanosecond())
-	// Convert nanoseconds to NTP fractional seconds (2^32 units per second)
-	frac := (nanos << 32) / 1e9
+	frac := (uint64(t.Nanosecond()) << 32) / 1e9
 	return (secs << 32) | frac
 }
 
-// ntpToTime converts a 64-bit NTP timestamp to Go time.Time
 func ntpToTime(ntp uint64) time.Time {
 	secs := (ntp >> 32) - ntpEpochOffset
-	frac := ntp & 0xFFFFFFFF
-	// Convert NTP fractional seconds to nanoseconds
-	nanos := (frac * 1e9) >> 32
+	nanos := ((ntp & 0xFFFFFFFF) * 1e9) >> 32
 	return time.Unix(int64(secs), int64(nanos))
 }
 
-// getErrorEstimate returns a basic error estimate for timestamp accuracy
-// Format per RFC 4656 Section 3.7.1: S | Z | Scale | Multiplier
-// For simplicity: S=0 (synchronized), Z=0 (accurate), Scale=0, Multiplier=1
-func getErrorEstimate() uint16 {
-	return 0x0001 // Minimal error estimate
+// getErrorEstimate returns the RFC 4656 §3.7.1 error estimate field.
+// Bit layout: S(1) | Z(1) | Scale(6) | Multiplier(8)
+// S=1 signals the sender is UTC-synchronized (NTP-disciplined clock).
+// We always assert S=1; if your system is not NTP-synced, pass -no-sync.
+func getErrorEstimate(synced bool) uint16 {
+	if synced {
+		return 0x8001 // S=1, Z=0, Scale=0, Multiplier=1
+	}
+	return 0x0001 // S=0 (unsynchronized)
 }
 
 // ============================================================================
 // TWAMP Packet Structures (RFC 5357)
 // ============================================================================
 
-// TWAMPTestRequest represents a TWAMP-Test request packet (sender to reflector)
-// RFC 5357 Section 4.1.2 - Unauthenticated mode
+// TWAMPTestRequest is a TWAMP-Light sender packet (RFC 4656 §4.1.2).
 type TWAMPTestRequest struct {
 	SequenceNumber uint32
 	Timestamp      time.Time
 	ErrorEstimate  uint16
+	Padding        []byte // Optional zero-padding to reach negotiated packet size
 }
 
-// MarshalBinary encodes the test request packet
 func (p *TWAMPTestRequest) MarshalBinary() []byte {
-	buf := make([]byte, TestRequestMinSize)
+	size := testRequestBaseSize + len(p.Padding)
+	buf := make([]byte, size)
 	binary.BigEndian.PutUint32(buf[0:4], p.SequenceNumber)
 	binary.BigEndian.PutUint64(buf[4:12], timeToNTP(p.Timestamp))
 	binary.BigEndian.PutUint16(buf[12:14], p.ErrorEstimate)
+	// Padding bytes are already zero from make()
 	return buf
 }
 
-// UnmarshalBinary decodes the test request packet
 func (p *TWAMPTestRequest) UnmarshalBinary(data []byte) error {
-	if len(data) < TestRequestMinSize {
-		return fmt.Errorf("packet too short: %d bytes (minimum %d)", len(data), TestRequestMinSize)
+	if len(data) < testRequestBaseSize {
+		return fmt.Errorf("packet too short: %d bytes (minimum %d)", len(data), testRequestBaseSize)
 	}
 	p.SequenceNumber = binary.BigEndian.Uint32(data[0:4])
 	p.Timestamp = ntpToTime(binary.BigEndian.Uint64(data[4:12]))
 	p.ErrorEstimate = binary.BigEndian.Uint16(data[12:14])
+	if len(data) > testRequestBaseSize {
+		p.Padding = data[testRequestBaseSize:]
+	}
 	return nil
 }
 
-// TWAMPTestResponse represents a TWAMP-Test response packet (reflector to sender)
-// RFC 5357 Section 4.2.1 - Unauthenticated mode
+// TWAMPTestResponse is a TWAMP-Light reflector packet (RFC 5357 §4.2.1).
 type TWAMPTestResponse struct {
-	// Sender's original data (copied from request)
-	SequenceNumber uint32
-	Timestamp      time.Time
-	ErrorEstimate  uint16
-	MBZ            uint16 // Must Be Zero
-
-	// Reflector's timestamps
-	ReceiveTimestamp time.Time // T2: When reflector received packet
-	SenderSeqNumber  uint32    // Reflector's own sequence number
-	SenderTimestamp  time.Time // T3: When reflector sent response
-	SenderError      uint16    // Reflector's error estimate
-	MBZ2             uint8     // Must Be Zero
-	SenderTTL        uint8     // TTL from received packet
+	SequenceNumber   uint32
+	Timestamp        time.Time
+	ErrorEstimate    uint16
+	MBZ              uint16
+	ReceiveTimestamp time.Time
+	SenderSeqNumber  uint32
+	SenderTimestamp  time.Time
+	SenderError      uint16
+	MBZ2             uint8
+	SenderTTL        uint8
 }
 
-// MarshalBinary encodes the test response packet
 func (p *TWAMPTestResponse) MarshalBinary() []byte {
-	buf := make([]byte, TestResponseMinSize)
-	offset := 0
+	buf := make([]byte, testResponseBaseSize)
+	off := 0
 
-	// Copy sender's original data
-	binary.BigEndian.PutUint32(buf[offset:offset+4], p.SequenceNumber)
-	offset += 4
-	binary.BigEndian.PutUint64(buf[offset:offset+8], timeToNTP(p.Timestamp))
-	offset += 8
-	binary.BigEndian.PutUint16(buf[offset:offset+2], p.ErrorEstimate)
-	offset += 2
-	binary.BigEndian.PutUint16(buf[offset:offset+2], 0) // MBZ
-	offset += 2
+	binary.BigEndian.PutUint32(buf[off:], p.SequenceNumber)
+	off += 4
+	binary.BigEndian.PutUint64(buf[off:], timeToNTP(p.Timestamp))
+	off += 8
+	binary.BigEndian.PutUint16(buf[off:], p.ErrorEstimate)
+	off += 2
+	binary.BigEndian.PutUint16(buf[off:], 0) // MBZ
+	off += 2
 
-	// Add reflector timestamps
-	binary.BigEndian.PutUint64(buf[offset:offset+8], timeToNTP(p.ReceiveTimestamp))
-	offset += 8
-	binary.BigEndian.PutUint32(buf[offset:offset+4], p.SenderSeqNumber)
-	offset += 4
-	binary.BigEndian.PutUint64(buf[offset:offset+8], timeToNTP(p.SenderTimestamp))
-	offset += 8
-	binary.BigEndian.PutUint16(buf[offset:offset+2], p.SenderError)
-	offset += 2
-	buf[offset] = 0 // MBZ2
-	offset++
-	buf[offset] = p.SenderTTL
+	binary.BigEndian.PutUint64(buf[off:], timeToNTP(p.ReceiveTimestamp))
+	off += 8
+	binary.BigEndian.PutUint32(buf[off:], p.SenderSeqNumber)
+	off += 4
+	binary.BigEndian.PutUint64(buf[off:], timeToNTP(p.SenderTimestamp))
+	off += 8
+	binary.BigEndian.PutUint16(buf[off:], p.SenderError)
+	off += 2
+	buf[off] = 0 // MBZ2
+	off++
+	buf[off] = p.SenderTTL
 
 	return buf
 }
 
-// UnmarshalBinary decodes the test response packet
 func (p *TWAMPTestResponse) UnmarshalBinary(data []byte) error {
-	if len(data) < TestResponseMinSize {
-		return fmt.Errorf("response too short: %d bytes (minimum %d)", len(data), TestResponseMinSize)
+	if len(data) < testResponseBaseSize {
+		return fmt.Errorf("response too short: %d bytes (minimum %d)", len(data), testResponseBaseSize)
 	}
+	off := 0
+	p.SequenceNumber = binary.BigEndian.Uint32(data[off:])
+	off += 4
+	p.Timestamp = ntpToTime(binary.BigEndian.Uint64(data[off:]))
+	off += 8
+	p.ErrorEstimate = binary.BigEndian.Uint16(data[off:])
+	off += 2
+	p.MBZ = binary.BigEndian.Uint16(data[off:])
+	off += 2
 
-	offset := 0
-	p.SequenceNumber = binary.BigEndian.Uint32(data[offset : offset+4])
-	offset += 4
-	p.Timestamp = ntpToTime(binary.BigEndian.Uint64(data[offset : offset+8]))
-	offset += 8
-	p.ErrorEstimate = binary.BigEndian.Uint16(data[offset : offset+2])
-	offset += 2
-	p.MBZ = binary.BigEndian.Uint16(data[offset : offset+2])
-	offset += 2
-
-	p.ReceiveTimestamp = ntpToTime(binary.BigEndian.Uint64(data[offset : offset+8]))
-	offset += 8
-	p.SenderSeqNumber = binary.BigEndian.Uint32(data[offset : offset+4])
-	offset += 4
-	p.SenderTimestamp = ntpToTime(binary.BigEndian.Uint64(data[offset : offset+8]))
-	offset += 8
-	p.SenderError = binary.BigEndian.Uint16(data[offset : offset+2])
-	offset += 2
-	p.MBZ2 = data[offset]
-	offset++
-	p.SenderTTL = data[offset]
+	p.ReceiveTimestamp = ntpToTime(binary.BigEndian.Uint64(data[off:]))
+	off += 8
+	p.SenderSeqNumber = binary.BigEndian.Uint32(data[off:])
+	off += 4
+	p.SenderTimestamp = ntpToTime(binary.BigEndian.Uint64(data[off:]))
+	off += 8
+	p.SenderError = binary.BigEndian.Uint16(data[off:])
+	off += 2
+	p.MBZ2 = data[off]
+	off++
+	p.SenderTTL = data[off]
 
 	return nil
 }
 
 // ============================================================================
-// RTT Calculation (RFC 5357 Section 4.2.1)
+// RTT Calculation (RFC 5357 §4.2.1)
 // ============================================================================
 
-// CalculateRTT computes round-trip time using the four-timestamp method
-// This removes server processing delay from the calculation
-// RTT = (T4 - T1) - (T3 - T2)
-// Where:
-//   T1 = Client send time
-//   T2 = Server receive time
-//   T3 = Server send time
-//   T4 = Client receive time
+// calculateRTT applies the four-timestamp method to remove reflector
+// processing delay: RTT = (T4 - T1) - (T3 - T2).
 func calculateRTT(t1, t2, t3, t4 time.Time) time.Duration {
-	totalTime := t4.Sub(t1)      // Client's perspective of total time
-	serverDelay := t3.Sub(t2)     // Server processing delay
-	rtt := totalTime - serverDelay
-
-	// Ensure non-negative RTT (clock sync issues can cause negative values)
+	rtt := t4.Sub(t1) - t3.Sub(t2)
 	if rtt < 0 {
 		return 0
 	}
@@ -201,338 +188,509 @@ func calculateRTT(t1, t2, t3, t4 time.Time) time.Duration {
 }
 
 // ============================================================================
-// Buffer Pool for Performance Optimization
+// Buffer Pool
 // ============================================================================
 
 var bufferPool = sync.Pool{
 	New: func() any {
-		return make([]byte, 1024) // Support larger packets with padding
+		b := make([]byte, 1024)
+		return &b
 	},
 }
 
-// ============================================================================
-// TWAMP Server (Session-Reflector)
-// ============================================================================
-
-// Server represents a TWAMP reflector server
-type Server struct {
-	conn          *net.UDPConn
-	logFile       *os.File
-	logger        *log.Logger
-	seqNumber     uint32
-	seqMutex      sync.Mutex
-	ctx           context.Context
-	cancel        context.CancelFunc
-	wg            sync.WaitGroup
-	semaphore     chan struct{} // Limit concurrent goroutines
+func getBuffer() *[]byte {
+	return bufferPool.Get().(*[]byte)
 }
 
-// NewServer creates a new TWAMP server instance
-func NewServer(logFile *os.File) *Server {
-	logger := log.New(os.Stdout, "[TWAMP-Server] ", log.LstdFlags|log.Lmicroseconds)
-	if logFile != nil {
-		logger.SetOutput(logFile)
+func putBuffer(b *[]byte) {
+	bufferPool.Put(b)
+}
+
+// ============================================================================
+// Rate Limiter (token bucket per source IP)
+// ============================================================================
+
+type rateLimiter struct {
+	mu      sync.Mutex
+	buckets map[string]*tokenBucket
+	rate    int // tokens per second (0 = unlimited)
+}
+
+type tokenBucket struct {
+	tokens   float64
+	lastFill time.Time
+}
+
+func newRateLimiter(rate int) *rateLimiter {
+	return &rateLimiter{
+		buckets: make(map[string]*tokenBucket),
+		rate:    rate,
+	}
+}
+
+// allow returns true if the source IP may send another packet.
+func (r *rateLimiter) allow(ip string) bool {
+	if r.rate <= 0 {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now()
+	b, ok := r.buckets[ip]
+	if !ok {
+		b = &tokenBucket{tokens: float64(r.rate), lastFill: now}
+		r.buckets[ip] = b
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	elapsed := now.Sub(b.lastFill).Seconds()
+	b.tokens += elapsed * float64(r.rate)
+	if b.tokens > float64(r.rate) {
+		b.tokens = float64(r.rate)
+	}
+	b.lastFill = now
 
+	if b.tokens >= 1 {
+		b.tokens--
+		return true
+	}
+	return false
+}
+
+// ============================================================================
+// CIDR Allowlist
+// ============================================================================
+
+type allowlist struct {
+	nets []*net.IPNet
+}
+
+// parseAllowlist parses a comma-separated list of CIDR prefixes.
+// An empty string means allow all.
+func parseAllowlist(s string) (*allowlist, error) {
+	al := &allowlist{}
+	if s == "" {
+		return al, nil
+	}
+	for _, cidr := range strings.Split(s, ",") {
+		cidr = strings.TrimSpace(cidr)
+		if cidr == "" {
+			continue
+		}
+		_, ipNet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid CIDR %q: %v", cidr, err)
+		}
+		al.nets = append(al.nets, ipNet)
+	}
+	return al, nil
+}
+
+func (al *allowlist) permitted(ip net.IP) bool {
+	if len(al.nets) == 0 {
+		return true
+	}
+	for _, n := range al.nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// ============================================================================
+// TWAMP-Light Server (Session-Reflector)
+// ============================================================================
+
+type Server struct {
+	conn      *net.UDPConn
+	logger    *log.Logger
+	seqMu     sync.Mutex
+	seqNumber uint32
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	semaphore chan struct{}
+	rl        *rateLimiter
+	al        *allowlist
+	synced    bool
+}
+
+func NewServer(logFile *os.File, rl *rateLimiter, al *allowlist, synced bool) *Server {
+	out := io.Writer(os.Stdout)
+	if logFile != nil {
+		out = logFile
+	}
+	logger := log.New(out, "[TWAMP-Light-Server] ", log.LstdFlags|log.Lmicroseconds)
+
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Server{
-		logFile:   logFile,
 		logger:    logger,
-		seqNumber: 0,
 		ctx:       ctx,
 		cancel:    cancel,
 		semaphore: make(chan struct{}, maxConcurrentPackets),
+		rl:        rl,
+		al:        al,
+		synced:    synced,
 	}
 }
 
-// Start begins listening for TWAMP test packets
-func (s *Server) Start() error {
-	addr := net.UDPAddr{
-		Port: TWAMPPort,
-		IP:   net.ParseIP("::"), // Listen on all IPv6 interfaces (includes IPv4-mapped)
+func (s *Server) Start(port int) error {
+	addr := &net.UDPAddr{Port: port, IP: net.IPv6zero}
+
+	conn4, err4 := net.ListenUDP("udp4", &net.UDPAddr{Port: port, IP: net.IPv4zero})
+	conn6, err6 := net.ListenUDP("udp6", addr)
+
+	switch {
+	case err4 != nil && err6 != nil:
+		return fmt.Errorf("failed to bind: %v / %v", err4, err6)
+	case err4 == nil && err6 == nil:
+		s.logger.Printf("TWAMP-Light Reflector listening on port %d (IPv4 + IPv6)", port)
+		go s.serve(conn4)
+		s.serve(conn6)
+		return nil
+	case err6 == nil:
+		s.logger.Printf("TWAMP-Light Reflector listening on port %d (IPv6 only)", port)
+		s.serve(conn6)
+		return nil
+	default:
+		s.logger.Printf("TWAMP-Light Reflector listening on port %d (IPv4 only)", port)
+		s.serve(conn4)
+		return nil
 	}
+}
 
-	conn, err := net.ListenUDP("udp", &addr)
-	if err != nil {
-		return fmt.Errorf("failed to start server: %v", err)
-	}
-	s.conn = conn
+func (s *Server) serve(conn *net.UDPConn) {
+	conn.SetReadBuffer(1 << 20)
+	conn.SetWriteBuffer(1 << 20)
 
-	// Set socket buffer sizes for better performance
-	s.conn.SetReadBuffer(1024 * 1024)  // 1MB read buffer
-	s.conn.SetWriteBuffer(1024 * 1024) // 1MB write buffer
+	go s.handleShutdown(conn)
 
-	s.logger.Printf("TWAMP Reflector listening on port %d (IPv4/IPv6)", TWAMPPort)
-
-	// Handle graceful shutdown
-	go s.handleShutdown()
-
-	// Main packet processing loop
 	for {
 		select {
 		case <-s.ctx.Done():
-			s.logger.Println("Server shutting down...")
-			s.wg.Wait() // Wait for all goroutines to finish
-			return nil
+			s.wg.Wait()
+			return
 		default:
-			// Get buffer from pool
-			buf := bufferPool.Get().([]byte)
+		}
 
-			// Set read deadline to allow periodic context checking
-			s.conn.SetReadDeadline(time.Now().Add(1 * time.Second))
-
-			n, clientAddr, err := s.conn.ReadFromUDP(buf)
-			if err != nil {
-				bufferPool.Put(buf)
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-					continue // Timeout is expected, continue loop
-				}
-				if s.ctx.Err() != nil {
-					return nil // Context cancelled
-				}
-				s.logger.Printf("Read error: %v", err)
+		bufp := getBuffer()
+		conn.SetReadDeadline(time.Now().Add(time.Second))
+		n, clientAddr, err := conn.ReadFromUDP(*bufp)
+		if err != nil {
+			putBuffer(bufp)
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
-
-			// Acquire semaphore to limit concurrent goroutines
-			s.semaphore <- struct{}{}
-			s.wg.Add(1)
-
-			// Process packet in goroutine for better performance
-			go s.handleTestPacket(buf[:n], clientAddr)
+			if s.ctx.Err() != nil {
+				return
+			}
+			s.logger.Printf("Read error: %v", err)
+			continue
 		}
+
+		clientIP := clientAddr.IP
+		if !s.al.permitted(clientIP) {
+			s.logger.Printf("Rejected packet from %s (not in allowlist)", clientAddr)
+			putBuffer(bufp)
+			continue
+		}
+		if !s.rl.allow(clientIP.String()) {
+			s.logger.Printf("Rate-limited packet from %s", clientAddr)
+			putBuffer(bufp)
+			continue
+		}
+
+		data := make([]byte, n)
+		copy(data, (*bufp)[:n])
+		putBuffer(bufp)
+
+		s.semaphore <- struct{}{}
+		s.wg.Add(1)
+		go s.handleTestPacket(conn, data, clientAddr)
 	}
 }
 
-// handleTestPacket processes a TWAMP test request and sends response
-func (s *Server) handleTestPacket(data []byte, clientAddr *net.UDPAddr) {
+func (s *Server) handleTestPacket(conn *net.UDPConn, data []byte, clientAddr *net.UDPAddr) {
 	defer func() {
-		bufferPool.Put(data[:cap(data)]) // Return full buffer to pool
-		<-s.semaphore                     // Release semaphore
+		<-s.semaphore
 		s.wg.Done()
 	}()
 
-	// T2: Record receive timestamp immediately
-	receiveTime := time.Now()
+	receiveTime := time.Now() // T2
 
-	// Parse request packet
 	var req TWAMPTestRequest
 	if err := req.UnmarshalBinary(data); err != nil {
 		s.logger.Printf("Invalid packet from %s: %v", clientAddr, err)
 		return
 	}
 
-	s.logger.Printf("Received test packet from %s: seq=%d", clientAddr, req.SequenceNumber)
-
-	// Get TTL from received packet (requires socket options - simplified here)
-	ttl := uint8(64) // Default, actual implementation would extract from IP header
-
-	// Increment server's own sequence number
-	s.seqMutex.Lock()
+	s.seqMu.Lock()
 	s.seqNumber++
 	currentSeq := s.seqNumber
-	s.seqMutex.Unlock()
+	s.seqMu.Unlock()
 
-	// Create response packet
 	response := TWAMPTestResponse{
-		// Copy sender's original data
-		SequenceNumber: req.SequenceNumber,
-		Timestamp:      req.Timestamp,
-		ErrorEstimate:  req.ErrorEstimate,
-		MBZ:            0,
-
-		// Add reflector data
+		SequenceNumber:   req.SequenceNumber,
+		Timestamp:        req.Timestamp,
+		ErrorEstimate:    req.ErrorEstimate,
 		ReceiveTimestamp: receiveTime,
 		SenderSeqNumber:  currentSeq,
-		SenderTimestamp:  time.Now(), // T3: Send timestamp
-		SenderError:      getErrorEstimate(),
-		MBZ2:             0,
-		SenderTTL:        ttl,
+		SenderTimestamp:  time.Now(), // T3
+		SenderError:      getErrorEstimate(s.synced),
+		SenderTTL:        64, // actual TTL requires raw socket; 64 is the standard default
 	}
 
-	// Marshal response
-	responseData := response.MarshalBinary()
-
-	// Send response
-	_, err := s.conn.WriteToUDP(responseData, clientAddr)
-	if err != nil {
+	if _, err := conn.WriteToUDP(response.MarshalBinary(), clientAddr); err != nil {
 		s.logger.Printf("Failed to send response to %s: %v", clientAddr, err)
 		return
 	}
 
-	s.logger.Printf("Sent response to %s: seq=%d, recv_time=%v, send_time=%v",
-		clientAddr, req.SequenceNumber, receiveTime.Format(time.RFC3339Nano),
+	s.logger.Printf("seq=%d src=%s recv=%s send=%s",
+		req.SequenceNumber, clientAddr,
+		receiveTime.Format(time.RFC3339Nano),
 		response.SenderTimestamp.Format(time.RFC3339Nano))
 }
 
-// handleShutdown listens for shutdown signals
-func (s *Server) handleShutdown() {
+func (s *Server) handleShutdown(conn *net.UDPConn) {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
 	<-sigChan
 	s.logger.Println("Received shutdown signal")
 	s.cancel()
-	if s.conn != nil {
-		s.conn.Close()
-	}
+	conn.Close()
 }
 
 // ============================================================================
-// TWAMP Client (Session-Sender)
+// TWAMP-Light Client (Session-Sender)
 // ============================================================================
 
-// Client represents a TWAMP test client
+// pendingSend tracks the send time for an in-flight packet.
+type pendingSend struct {
+	t1      time.Time
+	sentAt  time.Time // wall time, for expiry
+}
+
+// Client represents a TWAMP-Light session sender.
 type Client struct {
-	serverAddr string
-	logFile    *os.File
-	logger     *log.Logger
-	count      int
-	interval   time.Duration
+	serverAddr  string
+	port        int
+	logger      *log.Logger
+	count       int
+	interval    time.Duration
+	timeout     time.Duration
+	paddingSize int
+	synced      bool
 }
 
-// NewClient creates a new TWAMP client instance
-func NewClient(serverAddr string, logFile *os.File, count int, interval time.Duration) *Client {
-	logger := log.New(os.Stdout, "[TWAMP-Client] ", log.LstdFlags|log.Lmicroseconds)
+func NewClient(serverAddr string, logFile *os.File, count int, interval, timeout time.Duration, port, paddingSize int, synced bool) *Client {
+	out := io.Writer(os.Stdout)
 	if logFile != nil {
-		logger.SetOutput(logFile)
+		out = logFile
 	}
-
 	return &Client{
-		serverAddr: serverAddr,
-		logFile:    logFile,
-		logger:     logger,
-		count:      count,
-		interval:   interval,
+		serverAddr:  serverAddr,
+		port:        port,
+		logger:      log.New(out, "[TWAMP-Light-Client] ", log.LstdFlags|log.Lmicroseconds),
+		count:       count,
+		interval:    interval,
+		timeout:     timeout,
+		paddingSize: paddingSize,
+		synced:      synced,
 	}
 }
 
-// Run executes the TWAMP test session
 func (c *Client) Run() error {
-	// Resolve server address
-	server := fmt.Sprintf("[%s]:%d", c.serverAddr, TWAMPPort)
-	addr, err := net.ResolveUDPAddr("udp", server)
+	addr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(c.serverAddr, fmt.Sprintf("%d", c.port)))
 	if err != nil {
 		return fmt.Errorf("failed to resolve address: %v", err)
 	}
 
-	// Connect to server
 	conn, err := net.DialUDP("udp", nil, addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect: %v", err)
 	}
 	defer conn.Close()
 
-	// Set socket buffer sizes
-	conn.SetReadBuffer(1024 * 1024)
-	conn.SetWriteBuffer(1024 * 1024)
+	conn.SetReadBuffer(1 << 20)
+	conn.SetWriteBuffer(1 << 20)
 
-	c.logger.Printf("Starting TWAMP test to %s", c.serverAddr)
+	c.logger.Printf("Starting TWAMP-Light test to %s (count=%d interval=%v timeout=%v padding=%d)",
+		c.serverAddr, c.count, c.interval, c.timeout, c.paddingSize)
 
-	var stats []time.Duration
+	// pending maps sequence number → send info; recv goroutine writes results here.
+	type result struct {
+		rtt time.Duration
+		err error
+	}
 
+	pending := make(map[uint32]pendingSend)
+	var pendingMu sync.Mutex
+	results := make(chan result, c.count)
+
+	// Receiver goroutine — handles out-of-order responses.
+	recvDone := make(chan struct{})
+	go func() {
+		defer close(recvDone)
+		buf := make([]byte, 1024+c.paddingSize)
+		for {
+			conn.SetReadDeadline(time.Now().Add(c.timeout))
+			n, err := conn.Read(buf)
+			if err != nil {
+				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+					// Check if all expected responses have arrived.
+					pendingMu.Lock()
+					remaining := len(pending)
+					pendingMu.Unlock()
+					if remaining == 0 {
+						return
+					}
+					// Expire stale entries older than 2× timeout.
+					pendingMu.Lock()
+					for seq, ps := range pending {
+						if time.Since(ps.sentAt) > 2*c.timeout {
+							delete(pending, seq)
+							results <- result{err: fmt.Errorf("seq %d timed out", seq)}
+						}
+					}
+					remaining = len(pending)
+					pendingMu.Unlock()
+					if remaining == 0 {
+						return
+					}
+					continue
+				}
+				return
+			}
+
+			t4 := time.Now() // Record immediately after read
+
+			var resp TWAMPTestResponse
+			if err := resp.UnmarshalBinary(buf[:n]); err != nil {
+				results <- result{err: fmt.Errorf("invalid response: %v", err)}
+				continue
+			}
+
+			pendingMu.Lock()
+			ps, ok := pending[resp.SequenceNumber]
+			if ok {
+				delete(pending, resp.SequenceNumber)
+			}
+			pendingMu.Unlock()
+
+			if !ok {
+				results <- result{err: fmt.Errorf("unexpected seq %d", resp.SequenceNumber)}
+				continue
+			}
+
+			rtt := calculateRTT(ps.t1, resp.ReceiveTimestamp, resp.SenderTimestamp, t4)
+			results <- result{rtt: rtt}
+			c.logger.Printf("seq=%d RTT=%.3fms", resp.SequenceNumber, float64(rtt.Microseconds())/1000.0)
+		}
+	}()
+
+	// Sender loop.
 	for i := 0; i < c.count; i++ {
-		rtt, err := c.sendTestPacket(conn, uint32(i+1))
-		if err != nil {
-			c.logger.Printf("Test %d failed: %v", i+1, err)
-			continue
+		seq := uint32(i + 1)
+		t1 := time.Now()
+
+		req := TWAMPTestRequest{
+			SequenceNumber: seq,
+			Timestamp:      t1,
+			ErrorEstimate:  getErrorEstimate(c.synced),
+			Padding:        make([]byte, c.paddingSize),
 		}
 
-		stats = append(stats, rtt)
-		c.logger.Printf("Test %d: RTT = %v (%.3f ms)", i+1, rtt, float64(rtt.Microseconds())/1000.0)
+		pendingMu.Lock()
+		pending[seq] = pendingSend{t1: t1, sentAt: t1}
+		pendingMu.Unlock()
+
+		if _, err := conn.Write(req.MarshalBinary()); err != nil {
+			pendingMu.Lock()
+			delete(pending, seq)
+			pendingMu.Unlock()
+			results <- result{err: fmt.Errorf("send failed seq=%d: %v", seq, err)}
+		}
 
 		if i < c.count-1 {
 			time.Sleep(c.interval)
 		}
 	}
 
-	// Print statistics
-	c.printStats(stats)
+	// Wait for receiver to drain.
+	<-recvDone
 
+	// Collect results.
+	close(results)
+	var rtts []time.Duration
+	errCount := 0
+	for r := range results {
+		if r.err != nil {
+			c.logger.Printf("Error: %v", r.err)
+			errCount++
+		} else {
+			rtts = append(rtts, r.rtt)
+		}
+	}
+
+	c.printStats(rtts, c.count)
 	return nil
 }
 
-// sendTestPacket sends a single test packet and calculates RTT
-func (c *Client) sendTestPacket(conn *net.UDPConn, seqNum uint32) (time.Duration, error) {
-	// T1: Create and send test request
-	t1 := time.Now()
-	request := TWAMPTestRequest{
-		SequenceNumber: seqNum,
-		Timestamp:      t1,
-		ErrorEstimate:  getErrorEstimate(),
+func (c *Client) printStats(rtts []time.Duration, sent int) {
+	received := len(rtts)
+	c.logger.Println("=== TWAMP-Light Test Statistics ===")
+	c.logger.Printf("Packets sent:     %d", sent)
+	c.logger.Printf("Packets received: %d", received)
+	if sent > 0 {
+		c.logger.Printf("Packet loss:      %.1f%%", float64(sent-received)/float64(sent)*100)
 	}
-
-	requestData := request.MarshalBinary()
-	_, err := conn.Write(requestData)
-	if err != nil {
-		return 0, fmt.Errorf("send failed: %v", err)
-	}
-
-	// Wait for response with timeout
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-
-	responseBuf := make([]byte, 1024)
-	n, err := conn.Read(responseBuf)
-	if err != nil {
-		return 0, fmt.Errorf("receive failed: %v", err)
-	}
-
-	// T4: Record receive time immediately
-	t4 := time.Now()
-
-	// Parse response
-	var response TWAMPTestResponse
-	if err := response.UnmarshalBinary(responseBuf[:n]); err != nil {
-		return 0, fmt.Errorf("invalid response: %v", err)
-	}
-
-	// Verify sequence number
-	if response.SequenceNumber != seqNum {
-		return 0, fmt.Errorf("sequence mismatch: expected %d, got %d", seqNum, response.SequenceNumber)
-	}
-
-	// Calculate RTT using four timestamps
-	// T1 = request.Timestamp (client send)
-	// T2 = response.ReceiveTimestamp (server receive)
-	// T3 = response.SenderTimestamp (server send)
-	// T4 = t4 (client receive)
-	rtt := calculateRTT(t1, response.ReceiveTimestamp, response.SenderTimestamp, t4)
-
-	return rtt, nil
-}
-
-// printStats displays test statistics
-func (c *Client) printStats(rtts []time.Duration) {
-	if len(rtts) == 0 {
+	if received == 0 {
 		c.logger.Println("No successful tests")
 		return
 	}
 
-	var sum, min, max time.Duration
-	min = rtts[0]
-	max = rtts[0]
-
-	for _, rtt := range rtts {
-		sum += rtt
-		if rtt < min {
-			min = rtt
+	var sum time.Duration
+	minRTT := rtts[0]
+	maxRTT := rtts[0]
+	for _, r := range rtts {
+		sum += r
+		if r < minRTT {
+			minRTT = r
 		}
-		if rtt > max {
-			max = rtt
+		if r > maxRTT {
+			maxRTT = r
 		}
 	}
+	avg := sum / time.Duration(received)
 
-	avg := sum / time.Duration(len(rtts))
+	// Standard deviation
+	var variance float64
+	avgF := float64(avg)
+	for _, r := range rtts {
+		d := float64(r) - avgF
+		variance += d * d
+	}
+	stddev := time.Duration(math.Sqrt(variance / float64(received)))
 
-	c.logger.Println("=== Test Statistics ===")
-	c.logger.Printf("Packets sent: %d", c.count)
-	c.logger.Printf("Packets received: %d", len(rtts))
-	c.logger.Printf("Loss: %.1f%%", float64(c.count-len(rtts))/float64(c.count)*100)
-	c.logger.Printf("RTT min/avg/max: %.3f / %.3f / %.3f ms",
-		float64(min.Microseconds())/1000.0,
-		float64(avg.Microseconds())/1000.0,
-		float64(max.Microseconds())/1000.0)
+	// Mean absolute jitter (inter-packet delay variation)
+	var jitterSum time.Duration
+	for i := 1; i < received; i++ {
+		d := rtts[i] - rtts[i-1]
+		if d < 0 {
+			d = -d
+		}
+		jitterSum += d
+	}
+	var jitter time.Duration
+	if received > 1 {
+		jitter = jitterSum / time.Duration(received-1)
+	}
+
+	ms := func(d time.Duration) float64 { return float64(d.Microseconds()) / 1000.0 }
+	c.logger.Printf("RTT min/avg/max:  %.3f / %.3f / %.3f ms", ms(minRTT), ms(avg), ms(maxRTT))
+	c.logger.Printf("Std deviation:    %.3f ms", ms(stddev))
+	c.logger.Printf("Mean jitter:      %.3f ms", ms(jitter))
 }
 
 // ============================================================================
@@ -541,17 +699,24 @@ func (c *Client) printStats(rtts []time.Duration) {
 
 var (
 	mode        = flag.String("mode", "client", "Mode: client or server")
-	serverAddr  = flag.String("server", "localhost", "TWAMP server address (client mode only)")
-	runAsDaemon = flag.Bool("daemon", false, "Run server as a daemon")
-	logFilePath = flag.String("logfile", "", "Log file path (optional)")
-	count       = flag.Int("count", 10, "Number of test packets to send (client mode)")
-	interval    = flag.Duration("interval", 1*time.Second, "Interval between test packets (client mode)")
+	serverAddr  = flag.String("server", "localhost", "TWAMP-Light server address (client mode)")
+	port        = flag.Int("port", defaultPort, "UDP port (both modes)")
+	runAsDaemon = flag.Bool("daemon", false, "Run server as a daemon (server mode)")
+	logFilePath = flag.String("logfile", "", "Log file path (stdout if empty)")
+	count       = flag.Int("count", 10, "Number of test packets (client mode)")
+	interval    = flag.Duration("interval", time.Second, "Interval between packets (client mode)")
+	timeout     = flag.Duration("timeout", 5*time.Second, "Per-packet receive timeout (client mode)")
+	paddingSize = flag.Int("padding", 0, "Extra zero-padding bytes appended to test packets")
+	noSync      = flag.Bool("no-sync", false, "Assert clock is NOT NTP-synchronized (sets S=0 in error estimate)")
+	rateLimit   = flag.Int("rate-limit", 0, "Max packets per second per source IP on server (0 = unlimited)")
+	allowed     = flag.String("allowed", "", "Comma-separated CIDR allowlist for server (empty = allow all)")
 )
 
 func main() {
 	flag.Parse()
 
-	// Setup logging
+	synced := !*noSync
+
 	var logFile *os.File
 	if *logFilePath != "" {
 		var err error
@@ -563,50 +728,67 @@ func main() {
 		defer logFile.Close()
 	}
 
-	// Run based on mode
 	switch *mode {
 	case "server":
 		if *runAsDaemon {
 			runServerAsDaemon()
-		} else {
-			server := NewServer(logFile)
-			if err := server.Start(); err != nil {
-				fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
-				os.Exit(1)
-			}
+			return
+		}
+		al, err := parseAllowlist(*allowed)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Invalid allowlist: %v\n", err)
+			os.Exit(1)
+		}
+		rl := newRateLimiter(*rateLimit)
+		server := NewServer(logFile, rl, al, synced)
+		if err := server.Start(*port); err != nil {
+			fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+			os.Exit(1)
 		}
 
 	case "client":
-		client := NewClient(*serverAddr, logFile, *count, *interval)
+		client := NewClient(*serverAddr, logFile, *count, *interval, *timeout, *port, *paddingSize, synced)
 		if err := client.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "Client error: %v\n", err)
 			os.Exit(1)
 		}
 
 	default:
-		fmt.Fprintf(os.Stderr, "Invalid mode. Use 'client' or 'server'\n")
+		fmt.Fprintf(os.Stderr, "Invalid mode %q. Use 'client' or 'server'\n", *mode)
 		os.Exit(1)
 	}
 }
 
-// runServerAsDaemon forks the process to run as a background daemon
+// runServerAsDaemon re-executes the binary without -daemon, forwarding all
+// other flags so nothing is silently dropped.
 func runServerAsDaemon() {
-	attr := syscall.SysProcAttr{
-		Setsid: true, // Start a new session and detach from terminal
+	// Rebuild args: everything except -daemon / --daemon.
+	var args []string
+	skip := false
+	for _, a := range os.Args[1:] {
+		if a == "-daemon" || a == "--daemon" {
+			skip = true
+			continue
+		}
+		if skip {
+			skip = false
+			continue
+		}
+		args = append(args, a)
 	}
 
-	cmd := exec.Command(os.Args[0], "-mode", "server", "-logfile", *logFilePath)
-	cmd.SysProcAttr = &attr
+	cmd := exec.Command(os.Args[0], args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if *logFilePath != "" {
-		logFile, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		lf, err := os.OpenFile(*logFilePath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Printf("Error opening log file: %v", err)
+			log.Printf("Error opening log file for daemon: %v", err)
 			return
 		}
-		defer logFile.Close()
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
+		defer lf.Close()
+		cmd.Stdout = lf
+		cmd.Stderr = lf
 	} else {
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -617,6 +799,6 @@ func runServerAsDaemon() {
 		return
 	}
 
-	log.Printf("Server started as daemon (PID: %d)", cmd.Process.Pid)
+	log.Printf("TWAMP-Light server started as daemon (PID: %d)", cmd.Process.Pid)
 	os.Exit(0)
 }
