@@ -97,7 +97,7 @@ func (w *InfluxWriter) run(ctx context.Context, results <-chan ProbeResult) {
 		case <-ticker.C:
 			flush()
 		case <-ctx.Done():
-			// drain remaining queued results before final flush
+			// Drain remaining queued results
 			draining := true
 			for draining {
 				select {
@@ -106,15 +106,21 @@ func (w *InfluxWriter) run(ctx context.Context, results <-chan ProbeResult) {
 						draining = false
 					} else {
 						batch = append(batch, lineProtocol(r))
-						if len(batch) >= maxBatch {
-							flush()
-						}
 					}
 				default:
 					draining = false
 				}
 			}
-			flush()
+			// Use a fresh context for the final write — ctx is already cancelled
+			if len(batch) > 0 {
+				body := strings.Join(batch, "\n")
+				batch = batch[:0]
+				shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if err := w.write(shutdownCtx, body); err != nil {
+					w.logger.Printf("[InfluxWriter] shutdown flush error: %v", err)
+				}
+			}
 			return
 		}
 	}
