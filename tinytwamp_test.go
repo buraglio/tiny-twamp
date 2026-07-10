@@ -325,6 +325,14 @@ func TestParseAgentConfigMissingTopology(t *testing.T) {
 	}
 }
 
+func TestParseAgentConfigBadDuration(t *testing.T) {
+	raw := []byte(`{"topology":"mesh","probe_interval":"not-a-duration"}`)
+	_, err := parseAgentConfig(raw)
+	if err == nil {
+		t.Error("expected error for invalid duration, got nil")
+	}
+}
+
 func TestTargetsForMesh(t *testing.T) {
 	cfg := AgentConfig{
 		Topology: "mesh",
