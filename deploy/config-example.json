@@ -1,0 +1,24 @@
+{
+  "topology": "mesh",
+  "probe_interval": "60s",
+  "burst_size": 5,
+  "burst_interval": "200ms",
+  "packet_timeout": "5s",
+  "padding": 0,
+  "config_refresh": "5m",
+  "influxdb": {
+    "url": "http://influxdb.example.com:8086",
+    "token": "replace-with-your-influxdb-token",
+    "org": "myorg",
+    "bucket": "twamp"
+  },
+  "hosts": [
+    { "name": "probe-a", "address": "10.0.0.1", "site": "us-east" },
+    { "name": "probe-b", "address": "10.0.0.2", "site": "us-west" },
+    { "name": "probe-c", "address": "10.0.0.3", "site": "eu-west" }
+  ],
+  "hub_spoke": {
+    "enabled": false,
+    "hub": "probe-a"
+  }
+}

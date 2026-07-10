@@ -1,0 +1,19 @@
+[Unit]
+Description=TinyTWAMP-Light Agent
+Documentation=https://github.com/buraglio/tiny-twamp
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/tinytwamp \
+  -mode agent \
+  -config-url http://config-server/twamp-config.json \
+  -config-refresh 5m
+Restart=on-failure
+RestartSec=10s
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+DynamicUser=yes
+
+[Install]
+WantedBy=multi-user.target
