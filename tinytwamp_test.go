@@ -467,6 +467,9 @@ func TestLineProtocolEscapesSpaces(t *testing.T) {
 	if strings.Contains(line, "probe a") {
 		t.Error("spaces in tag values must be escaped as probe\\ a")
 	}
+	if !strings.Contains(line, `probe\ a`) {
+		t.Error("spaces in tag values should be escaped as probe\\ a")
+	}
 }
 
 // ============================================================================

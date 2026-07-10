@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"math"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -76,7 +78,7 @@ func (w *InfluxWriter) run(ctx context.Context, results <-chan ProbeResult) {
 		}
 		body := strings.Join(batch, "\n")
 		batch = batch[:0]
-		if err := w.write(body); err != nil {
+		if err := w.write(ctx, body); err != nil {
 			w.logger.Printf("[InfluxWriter] write error: %v", err)
 		}
 	}
@@ -95,6 +97,23 @@ func (w *InfluxWriter) run(ctx context.Context, results <-chan ProbeResult) {
 		case <-ticker.C:
 			flush()
 		case <-ctx.Done():
+			// drain remaining queued results before final flush
+			draining := true
+			for draining {
+				select {
+				case r, ok := <-results:
+					if !ok {
+						draining = false
+					} else {
+						batch = append(batch, lineProtocol(r))
+						if len(batch) >= maxBatch {
+							flush()
+						}
+					}
+				default:
+					draining = false
+				}
+			}
 			flush()
 			return
 		}
@@ -102,17 +121,21 @@ func (w *InfluxWriter) run(ctx context.Context, results <-chan ProbeResult) {
 }
 
 // write posts a Line Protocol body to InfluxDB with exponential backoff retry.
-func (w *InfluxWriter) write(body string) error {
-	url := fmt.Sprintf("%s/api/v2/write?org=%s&bucket=%s&precision=ns",
-		w.cfg.URL, w.cfg.Org, w.cfg.Bucket)
+func (w *InfluxWriter) write(ctx context.Context, body string) error {
+	q := url.Values{"org": {w.cfg.Org}, "bucket": {w.cfg.Bucket}, "precision": {"ns"}}
+	endpoint := w.cfg.URL + "/api/v2/write?" + q.Encode()
 
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			wait := time.Duration(math.Pow(2, float64(attempt))) * time.Second
-			time.Sleep(wait)
+			select {
+			case <-time.After(wait):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
-		req, err := http.NewRequest(http.MethodPost, url, bytes.NewBufferString(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBufferString(body))
 		if err != nil {
 			return fmt.Errorf("build request: %w", err)
 		}
@@ -124,11 +147,13 @@ func (w *InfluxWriter) write(body string) error {
 			lastErr = fmt.Errorf("HTTP error: %w", err)
 			continue
 		}
-		resp.Body.Close()
 		if resp.StatusCode == http.StatusNoContent {
+			resp.Body.Close()
 			return nil
 		}
-		lastErr = fmt.Errorf("unexpected status %d", resp.StatusCode)
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		resp.Body.Close()
+		lastErr = fmt.Errorf("unexpected status %d: %s", resp.StatusCode, bytes.TrimSpace(msg))
 	}
 	return fmt.Errorf("after 3 attempts: %w", lastErr)
 }
