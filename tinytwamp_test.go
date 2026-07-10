@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"net"
+	"strings"
 	"testing"
 	"time"
 )
@@ -396,6 +398,74 @@ func TestTargetsForUnknownHost(t *testing.T) {
 	targets := cfg.targetsFor("not-in-list")
 	if len(targets) != 0 {
 		t.Errorf("unknown host should get 0 targets, got %d", len(targets))
+	}
+}
+
+// ============================================================================
+// InfluxDB Line Protocol
+// ============================================================================
+
+func TestLineProtocolFormat(t *testing.T) {
+	r := ProbeResult{
+		Source:    "probe-a",
+		Target:    "probe-b",
+		Site:      "us-east",
+		Topology:  "mesh",
+		RttMin:    1 * time.Millisecond,
+		RttAvg:    2 * time.Millisecond,
+		RttMax:    3 * time.Millisecond,
+		RttStddev: 500 * time.Microsecond,
+		Jitter:    250 * time.Microsecond,
+		LossPct:   0.0,
+		SentAt:    time.Unix(1_000_000, 0).UTC(),
+		Sent:      5,
+		Recv:      5,
+	}
+	line := lineProtocol(r)
+
+	// Must start with measurement and contain key tags
+	if !strings.HasPrefix(line, "twamp_rtt,") {
+		t.Errorf("line should start with twamp_rtt,, got: %s", line)
+	}
+	if !strings.Contains(line, "source=probe-a") {
+		t.Errorf("missing source tag: %s", line)
+	}
+	if !strings.Contains(line, "target=probe-b") {
+		t.Errorf("missing target tag: %s", line)
+	}
+	if !strings.Contains(line, "topology=mesh") {
+		t.Errorf("missing topology tag: %s", line)
+	}
+	if !strings.Contains(line, "site=us-east") {
+		t.Errorf("missing site tag: %s", line)
+	}
+	if !strings.Contains(line, "rtt_avg_ms=2.000") {
+		t.Errorf("missing rtt_avg_ms field: %s", line)
+	}
+	if !strings.Contains(line, "loss_pct=0.000") {
+		t.Errorf("missing loss_pct field: %s", line)
+	}
+	if !strings.Contains(line, "packets_sent=5i") {
+		t.Errorf("missing packets_sent integer field: %s", line)
+	}
+	// Timestamp must be last token and be Unix nanoseconds of SentAt
+	wantTs := fmt.Sprintf("%d", time.Unix(1_000_000, 0).UnixNano())
+	if !strings.HasSuffix(strings.TrimSpace(line), wantTs) {
+		t.Errorf("line should end with timestamp %s, got: %s", wantTs, line)
+	}
+}
+
+func TestLineProtocolEscapesSpaces(t *testing.T) {
+	r := ProbeResult{
+		Source:   "probe a",
+		Target:   "probe b",
+		Site:     "us east",
+		Topology: "mesh",
+		SentAt:   time.Unix(1, 0),
+	}
+	line := lineProtocol(r)
+	if strings.Contains(line, "probe a") {
+		t.Error("spaces in tag values must be escaped as probe\\ a")
 	}
 }
 
