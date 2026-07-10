@@ -18,6 +18,9 @@ import (
 	"time"
 )
 
+// version is overwritten at build time by goreleaser ldflags.
+var version = "dev"
+
 // ============================================================================
 // RFC 5357 TWAMP-Light Constants
 // ============================================================================
@@ -698,9 +701,10 @@ func (c *Client) printStats(rtts []time.Duration, sent int) {
 // ============================================================================
 
 var (
-	mode        = flag.String("mode", "client", "Mode: client or server")
-	serverAddr  = flag.String("server", "localhost", "TWAMP-Light server address (client mode)")
-	port        = flag.Int("port", defaultPort, "UDP port (both modes)")
+	printVersion = flag.Bool("version", false, "Print version and exit")
+	mode         = flag.String("mode", "client", "Mode: client or server")
+	serverAddr   = flag.String("server", "localhost", "TWAMP-Light server address (client mode)")
+	port         = flag.Int("port", defaultPort, "UDP port (both modes)")
 	runAsDaemon = flag.Bool("daemon", false, "Run server as a daemon (server mode)")
 	logFilePath = flag.String("logfile", "", "Log file path (stdout if empty)")
 	count       = flag.Int("count", 10, "Number of test packets (client mode)")
@@ -714,6 +718,11 @@ var (
 
 func main() {
 	flag.Parse()
+
+	if *printVersion {
+		fmt.Println(version)
+		os.Exit(0)
+	}
 
 	synced := !*noSync
 
