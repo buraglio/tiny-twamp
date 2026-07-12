@@ -459,7 +459,6 @@ func (s *Server) handleTestPacket(conn *net.UDPConn, data []byte, clientAddr *ne
 		response.SenderTimestamp.Format(time.RFC3339Nano))
 }
 
-
 // ============================================================================
 // TWAMP-Light Client (Session-Sender)
 // ============================================================================
