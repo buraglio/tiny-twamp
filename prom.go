@@ -10,17 +10,18 @@ import (
 
 // PrometheusStore holds all registered TWAMP metrics and their registry.
 type PrometheusStore struct {
-	rttMin    *prometheus.GaugeVec
-	rttAvg    *prometheus.GaugeVec
-	rttMax    *prometheus.GaugeVec
-	rttStddev *prometheus.GaugeVec
-	jitter    *prometheus.GaugeVec
-	lossRatio *prometheus.GaugeVec
-	pktSent   *prometheus.CounterVec
-	pktRecv   *prometheus.CounterVec
-	reflected *prometheus.CounterVec
-	registry  *prometheus.Registry
-	hostname  string
+	rttMin        *prometheus.GaugeVec
+	rttAvg        *prometheus.GaugeVec
+	rttMax        *prometheus.GaugeVec
+	rttStddev     *prometheus.GaugeVec
+	jitter        *prometheus.GaugeVec
+	lossRatio     *prometheus.GaugeVec
+	pktSent       *prometheus.CounterVec
+	pktRecv       *prometheus.CounterVec
+	reflected     *prometheus.CounterVec
+	registry      *prometheus.Registry
+	hostname      string
+	scrapeHandler http.Handler // set by runExporter in scrape mode; nil otherwise
 }
 
 var probeLabels = []string{"source", "target", "topology", "site"}

@@ -304,18 +304,19 @@ func (al *allowlist) permitted(ip net.IP) bool {
 // ============================================================================
 
 type Server struct {
-	conn               *net.UDPConn
-	logger             *log.Logger
-	seqMu              sync.Mutex
-	seqNumber          uint32
-	ctx                context.Context
-	cancel             context.CancelFunc
-	wg                 sync.WaitGroup
-	semaphore          chan struct{}
-	rl                 *rateLimiter
-	al                 *allowlist
-	synced             bool
-	reflectedPackets   atomic.Uint64
+	conn             *net.UDPConn
+	logger           *log.Logger
+	seqMu            sync.Mutex
+	seqNumber        uint32
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
+	semaphore        chan struct{}
+	rl               *rateLimiter
+	al               *allowlist
+	synced           bool
+	reflectedPackets atomic.Uint64
+	onReflect        func() // optional callback invoked after each successful reflection
 }
 
 func NewServer(logFile *os.File, rl *rateLimiter, al *allowlist, synced bool) *Server {
@@ -452,6 +453,9 @@ func (s *Server) handleTestPacket(conn *net.UDPConn, data []byte, clientAddr *ne
 		return
 	}
 	s.reflectedPackets.Add(1)
+	if s.onReflect != nil {
+		s.onReflect()
+	}
 
 	s.logger.Printf("seq=%d src=%s recv=%s send=%s",
 		req.SequenceNumber, clientAddr,
@@ -815,6 +819,11 @@ var (
 	configURL     = flag.String("config-url", "", "HTTP URL of topology JSON config (required in agent mode)")
 	configRefresh = flag.Duration("config-refresh", 0, "Config re-fetch interval (default: value from config)")
 	agentHostname = flag.String("hostname", "", "Override hostname used for topology lookup (agent mode)")
+
+	probeMode      = flag.String("probe-mode", "background", "Exporter probe mode: background, scrape, or dual")
+	metricsAddr    = flag.String("metrics-addr", ":9862", "Address for Prometheus metrics HTTP server")
+	metricsTLSCert = flag.String("metrics-tls-cert", "", "TLS certificate file for metrics server (requires -metrics-tls-key)")
+	metricsTLSKey  = flag.String("metrics-tls-key", "", "TLS private key file for metrics server (requires -metrics-tls-cert)")
 )
 
 func main() {
@@ -870,8 +879,17 @@ func main() {
 		}
 		runAgent(*port, *configURL, *agentHostname, *configRefresh, synced, logFile)
 
+	case "exporter":
+		if *configURL == "" {
+			fmt.Fprintf(os.Stderr, "exporter mode requires -config-url\n")
+			os.Exit(1)
+		}
+		runExporter(*port, *configURL, *agentHostname, *configRefresh,
+			*probeMode, *metricsAddr, *metricsTLSCert, *metricsTLSKey,
+			synced, logFile)
+
 	default:
-		fmt.Fprintf(os.Stderr, "Invalid mode %q. Use 'client', 'server', or 'agent'\n", *mode)
+		fmt.Fprintf(os.Stderr, "Invalid mode %q. Use 'client', 'server', 'agent', or 'exporter'\n", *mode)
 		os.Exit(1)
 	}
 }

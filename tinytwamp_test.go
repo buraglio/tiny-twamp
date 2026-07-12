@@ -643,3 +643,24 @@ func TestPrometheusStoreIncrementReflected(t *testing.T) {
 		t.Errorf("expected counter value 2 in output, got:\n%s", body)
 	}
 }
+
+// ============================================================================
+// Exporter TLS flag validation
+// ============================================================================
+
+func TestExporterTLSFlagValidation(t *testing.T) {
+	// Both cert and key must be provided together — validate the check logic.
+	// We test the validation function directly, not runExporter (which blocks).
+	err := validateTLSFlags("/path/to/cert", "")
+	if err == nil {
+		t.Error("expected error when cert is set but key is empty")
+	}
+	err = validateTLSFlags("", "/path/to/key")
+	if err == nil {
+		t.Error("expected error when key is set but cert is empty")
+	}
+	err = validateTLSFlags("", "")
+	if err != nil {
+		t.Errorf("expected no error when both are empty, got %v", err)
+	}
+}
