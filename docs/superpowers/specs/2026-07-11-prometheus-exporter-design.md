@@ -95,6 +95,8 @@ When a target is unreachable during a scrape-triggered probe: `twamp_loss_ratio`
 | `-mode exporter` | — | Enable exporter mode |
 | `-probe-mode` | `background` | `background`, `scrape`, or `dual` |
 | `-metrics-addr` | `:9862` | Address for the Prometheus HTTP server |
+| `-metrics-tls-cert` | `""` | Path to TLS certificate file (enables HTTPS when set with `-metrics-tls-key`) |
+| `-metrics-tls-key` | `""` | Path to TLS private key file |
 | `-config-url` | — | HTTP URL of topology JSON (required) |
 | `-config-refresh` | from config | Override config re-fetch interval |
 | `-hostname` | auto-detected | Override hostname for topology lookup |
@@ -154,6 +156,8 @@ func runExporter(
     configRefresh time.Duration,
     probeMode string,        // "background" | "scrape" | "dual"
     metricsAddr string,
+    metricsTLSCert string,   // path to cert file; empty = plain HTTP
+    metricsTLSKey  string,   // path to key file; empty = plain HTTP
     synced bool,
     logFile *os.File,
 )
@@ -206,6 +210,8 @@ The dispatcher goroutine reads one `ProbeResult` and sends it to both the Influx
 | InfluxDB write failure in `dual` | Log, retry, drop — same as agent mode |
 | `-probe-mode dual` with no influxdb config | Fatal at startup with clear error message |
 | `/metrics` HTTP error | Logged; Prometheus marks scrape as failed |
+| Only one of `-metrics-tls-cert`/`-metrics-tls-key` set | Fatal at startup — both must be provided together |
+| TLS cert or key file unreadable | Fatal at startup with clear error message |
 
 ---
 
@@ -254,7 +260,6 @@ scrape_configs:
 
 ## 10. Out of Scope
 
-- TLS on the `/metrics` endpoint
 - Prometheus push gateway support
 - Per-target scrape timeout configuration
 - Authenticated scraping (bearer token, mTLS)
