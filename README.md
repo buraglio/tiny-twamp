@@ -273,6 +273,86 @@ docker run --network host tinytwamp \
 > measurements. Use `--network host` on Linux, or run bare-metal/VM for
 > production.
 
+## Exporter Mode (Prometheus)
+
+Exporter mode simultaneously reflects TWAMP-Light packets and exposes RTT/jitter/loss metrics via a Prometheus `/metrics` endpoint (default `:9862`).
+
+### Quick Start
+
+```bash
+sudo ./tinytwamp -mode exporter \
+  -config-url http://config-server/twamp-config.json \
+  -probe-mode background \
+  -metrics-addr :9862
+```
+
+### Probe Modes
+
+| `-probe-mode` | Description |
+|---|---|
+| `background` (default) | Background scheduler probes continuously; scrapes return cached results instantly |
+| `scrape` | Each Prometheus scrape triggers a fresh burst before responding |
+| `dual` | Background probes push to both InfluxDB and Prometheus simultaneously |
+
+### Exporter CLI Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `-mode exporter` | — | Enable exporter mode |
+| `-probe-mode` | `background` | `background`, `scrape`, or `dual` |
+| `-metrics-addr` | `:9862` | Prometheus metrics listen address |
+| `-metrics-tls-cert` | `""` | TLS certificate file (enables HTTPS; requires `-metrics-tls-key`) |
+| `-metrics-tls-key` | `""` | TLS private key file |
+| `-config-url` | — | HTTP URL of topology JSON (required) |
+
+### With TLS
+
+```bash
+sudo ./tinytwamp -mode exporter \
+  -config-url http://config-server/twamp-config.json \
+  -metrics-addr :9862 \
+  -metrics-tls-cert /etc/twamp/server.crt \
+  -metrics-tls-key  /etc/twamp/server.key
+```
+
+Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: twamp
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true  # or provide ca_file
+    static_configs:
+      - targets: [probe-a:9862, probe-b:9862]
+    scrape_interval: 30s
+    scrape_timeout: 10s  # increase for scrape mode with many targets
+```
+
+### Metrics Exposed
+
+| Metric | Type | Description |
+|---|---|---|
+| `twamp_rtt_min_milliseconds` | Gauge | Minimum RTT (ms) |
+| `twamp_rtt_avg_milliseconds` | Gauge | Average RTT (ms) |
+| `twamp_rtt_max_milliseconds` | Gauge | Maximum RTT (ms) |
+| `twamp_rtt_stddev_milliseconds` | Gauge | RTT standard deviation (ms) |
+| `twamp_jitter_milliseconds` | Gauge | Mean absolute jitter (ms) |
+| `twamp_loss_ratio` | Gauge | Packet loss 0.0–1.0 |
+| `twamp_packets_sent_total` | Counter | Cumulative packets sent |
+| `twamp_packets_received_total` | Counter | Cumulative packets received |
+| `twamp_reflected_packets_total` | Counter | Packets reflected by this host |
+
+Labels on probe metrics: `source`, `target`, `topology`, `site`.
+
+### Install as a Service
+
+```bash
+sudo cp deploy/tinytwamp-exporter.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now tinytwamp-exporter
+```
+
 ## Known Limitations
 
 1. **No TWAMP-Control protocol** — TWAMP-Light only; not interoperable with
