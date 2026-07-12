@@ -231,6 +231,9 @@ func runExporter(
 			w := newInfluxWriter(initialCfg.InfluxDB, logger)
 			w.run(ctx, influxCh)
 		}()
+
+	default:
+		logger.Fatalf("unknown -probe-mode %q; must be background, scrape, or dual", probeMode)
 	}
 
 	// Start metrics HTTP server
