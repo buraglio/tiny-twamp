@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
@@ -38,6 +39,13 @@ func runExporter(
 	// Validate TLS flags
 	if err := validateTLSFlags(metricsTLSCert, metricsTLSKey); err != nil {
 		logger.Fatalf("%v", err)
+	}
+
+	// Pre-validate TLS key pair is readable before starting any goroutines
+	if metricsTLSCert != "" {
+		if _, err := tls.LoadX509KeyPair(metricsTLSCert, metricsTLSKey); err != nil {
+			logger.Fatalf("Cannot load TLS cert/key: %v", err)
+		}
 	}
 
 	// Fetch initial config — fatal on failure
@@ -151,7 +159,10 @@ func runExporter(
 
 		// Override the HTTP handler to probe inline on each scrape
 		origHandler := store.Handler()
+		var scrapeMu sync.Mutex
 		scrapeHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			scrapeMu.Lock()
+			defer scrapeMu.Unlock()
 			cfgMu.RLock()
 			cfg := currentCfg
 			cfgMu.RUnlock()
@@ -248,7 +259,11 @@ func runExporter(
 		fmt.Fprintf(w, `<html><body><a href="/metrics">Metrics</a></body></html>`)
 	})
 
-	srv := &http.Server{Addr: metricsAddr, Handler: mux}
+	srv := &http.Server{
+		Addr:              metricsAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
 
 	wg.Add(1)
 	go func() {
@@ -267,6 +282,8 @@ func runExporter(
 	}()
 
 	platformWaitForShutdown(cancel, logger)
-	srv.Close()
+	shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutCancel()
+	srv.Shutdown(shutCtx) //nolint:errcheck
 	wg.Wait()
 }
