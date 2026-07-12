@@ -481,6 +481,25 @@ func TestLineProtocolEscapesSpaces(t *testing.T) {
 }
 
 // ============================================================================
+// Server reflected counter
+// ============================================================================
+
+func TestServerReflectedCount(t *testing.T) {
+	srv := NewServer(nil, newRateLimiter(0), &allowlist{}, true)
+	if srv.ReflectedCount() != 0 {
+		t.Errorf("initial ReflectedCount = %d, want 0", srv.ReflectedCount())
+	}
+	srv.reflectedPackets.Add(1)
+	if srv.ReflectedCount() != 1 {
+		t.Errorf("after Add(1) ReflectedCount = %d, want 1", srv.ReflectedCount())
+	}
+	srv.reflectedPackets.Add(99)
+	if srv.ReflectedCount() != 100 {
+		t.Errorf("after Add(99) ReflectedCount = %d, want 100", srv.ReflectedCount())
+	}
+}
+
+// ============================================================================
 // Statistics helpers (stddev, jitter)
 // ============================================================================
 

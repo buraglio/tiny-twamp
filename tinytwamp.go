@@ -12,6 +12,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -303,17 +304,18 @@ func (al *allowlist) permitted(ip net.IP) bool {
 // ============================================================================
 
 type Server struct {
-	conn      *net.UDPConn
-	logger    *log.Logger
-	seqMu     sync.Mutex
-	seqNumber uint32
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
-	semaphore chan struct{}
-	rl        *rateLimiter
-	al        *allowlist
-	synced    bool
+	conn               *net.UDPConn
+	logger             *log.Logger
+	seqMu              sync.Mutex
+	seqNumber          uint32
+	ctx                context.Context
+	cancel             context.CancelFunc
+	wg                 sync.WaitGroup
+	semaphore          chan struct{}
+	rl                 *rateLimiter
+	al                 *allowlist
+	synced             bool
+	reflectedPackets   atomic.Uint64
 }
 
 func NewServer(logFile *os.File, rl *rateLimiter, al *allowlist, synced bool) *Server {
@@ -333,6 +335,10 @@ func NewServer(logFile *os.File, rl *rateLimiter, al *allowlist, synced bool) *S
 		al:        al,
 		synced:    synced,
 	}
+}
+
+func (s *Server) ReflectedCount() uint64 {
+	return s.reflectedPackets.Load()
 }
 
 func (s *Server) Start(port int) error {
@@ -445,6 +451,7 @@ func (s *Server) handleTestPacket(conn *net.UDPConn, data []byte, clientAddr *ne
 		s.logger.Printf("Failed to send response to %s: %v", clientAddr, err)
 		return
 	}
+	s.reflectedPackets.Add(1)
 
 	s.logger.Printf("seq=%d src=%s recv=%s send=%s",
 		req.SequenceNumber, clientAddr,
