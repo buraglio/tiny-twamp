@@ -1,5 +1,7 @@
-
 # TinyTWAMP — RFC 5357 TWAMP-Light Implementation
+
+# READ THIS
+## This application works stand alone. However, it should be deprecated in favor of [piccolo-perf](https://github.com/retecolo/piccolo-perf) which contains this code as part of a larger suite. 
 
 A lightweight, RFC 5357 §5 **TWAMP-Light** server and client written in Go.
 TWAMP-Light omits the TCP-based TWAMP-Control negotiation phase; both endpoints
